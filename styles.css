@@ -727,7 +727,7 @@ tr.total-row td {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 14px;
+  border-radius: 0;
   overflow: hidden;
   background: transparent;
   box-shadow: none;
@@ -738,7 +738,7 @@ tr.total-row td {
   height: 46px;
   display: block;
   object-fit: contain;
-  border-radius: 14px;
+  border-radius: 0;
 }
 
 .brand-text h1 {
@@ -858,7 +858,7 @@ body.pin-locked {
   align-items: center;
   justify-content: center;
 
-  border-radius: 18px;
+  border-radius: 0;
   overflow: hidden;
   background: transparent;
   box-shadow: none;
@@ -869,7 +869,7 @@ body.pin-locked {
   height: 60px;
   display: block;
   object-fit: contain;
-  border-radius: 18px;
+  border-radius: 0;
 }
 
 /* 월간 보고서: 기존 카드 디자인을 유지하며 필터와 로고를 조정 */
