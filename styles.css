@@ -1231,9 +1231,11 @@ body.pin-locked,
 }
 
 .pin-card .report-title--pin {
+  width: 100%;
   flex-direction: column;
   align-items: center;
   gap: 5px;
+  text-align: center;
   white-space: normal;
 }
 
