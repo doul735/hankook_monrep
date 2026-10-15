@@ -1230,12 +1230,16 @@ body.pin-locked,
   text-shadow: none;
 }
 
-.pin-card .report-title--pin {
+.pin-card .report-title {
   width: 100%;
+  justify-content: center;
+  text-align: center;
+}
+
+.pin-card .report-title--pin {
   flex-direction: column;
   align-items: center;
   gap: 5px;
-  text-align: center;
   white-space: normal;
 }
 
