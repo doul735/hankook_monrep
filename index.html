@@ -4,15 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <title>광주전라PC/LT팀 Naver Place Report</title>
+  <title>부산울산 PC/LT팀 Naver Place Report</title>
   <meta
     name="description"
-    content="광주전라PC/LT팀 네이버 플레이스 주요 성과 월간보고서"
+    content="부산울산 PC/LT팀 네이버 플레이스 주요 성과 월간보고서"
   />
 
   <meta
     property="og:title"
-    content="광주전라PC/LT팀 네이버 플레이스 보고서"
+    content="부산울산 PC/LT팀 네이버 플레이스 보고서"
   />
   <meta
     property="og:description"
@@ -21,11 +21,11 @@
   <meta property="og:type" content="website" />
 
   <link rel="icon" href="./pllet-logo.png?v=20261015-3" type="image/png" />
-  <link rel="stylesheet" href="./styles.css?v=20261015-title4" />
+  <link rel="stylesheet" href="./styles.css?v=20261016-period12" />
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="./app.js?v=20261015-month3" defer></script>
+  <script src="./app.js?v=20261016-period12" defer></script>
 </head>
 
 <body class="pin-locked">
@@ -38,9 +38,8 @@
 
       <p class="pin-eyebrow">도울기획 · 네이버 플레이스</p>
 
-      <h1 class="report-title report-title--pin">
-        <span class="report-title-team">광주전라PC/LT팀</span>
-        <span class="report-title-en">Naver Place Report</span>
+      <h1 class="report-title">
+        <span class="report-title-team">부산울산 PC/LT팀</span>
       </h1>
       <p class="pin-guide">
         보고서를 확인하려면<br />
@@ -77,7 +76,7 @@
 
         <div class="brand-text">
           <h1 class="report-title report-title--header">
-            <span class="report-title-team">광주전라PC/LT팀</span>
+            <span class="report-title-team">부산울산 PC/LT팀</span>
             <span class="report-title-en">Naver Place Report</span>
           </h1>
           <p>도울기획 · 주요 성과 요약 대시보드</p>
@@ -101,6 +100,11 @@
 
     <section class="filter-panel" aria-label="보고서 조회 조건">
       <div class="filter-item">
+        <label for="sel-team">팀별 조회</label>
+        <select id="sel-team"></select>
+      </div>
+
+      <div class="filter-item">
         <label for="sel-store">매장별 조회</label>
         <select id="sel-store"></select>
       </div>
@@ -111,9 +115,13 @@
       </div>
 
       <div class="filter-item month-filter is-active">
-        <label for="sel-month">월별 선택</label>
-        <select id="sel-month"></select>
-        <p class="filter-help">해당 월의 매장별 데이터를 합산</p>
+        <label for="sel-month-start">기간 선택 · 시작월</label>
+        <select id="sel-month-start"></select>
+      </div>
+
+      <div class="filter-item month-filter is-active">
+        <label for="sel-month-end">기간 선택 · 종료월</label>
+        <select id="sel-month-end"></select>
       </div>
 
       <button
@@ -125,13 +133,22 @@
       </button>
     </section>
 
+    <section class="manager-summary" id="manager-summary" hidden aria-live="polite">
+      <div class="manager-summary-heading">
+        <span>담당자별 매장</span>
+        <strong id="manager-summary-title"></strong>
+      </div>
+      <div class="manager-store-chips" id="manager-summary-stores"></div>
+      <small>선택한 조회 기간의 시트 데이터 기준 · 매장별 조회 조건과 별도</small>
+    </section>
+
     <section class="period-grid">
-      <article class="period-card current">
+      <article class="period-card prev-year">
         <span class="dot"></span>
 
         <div>
-          <strong id="period-current-title">선택 기준</strong>
-          <p id="period-current">-</p>
+          <strong id="period-prev-year-title">전년</strong>
+          <p id="period-prev-year">-</p>
         </div>
       </article>
 
@@ -144,12 +161,12 @@
         </div>
       </article>
 
-      <article class="period-card prev-year">
+      <article class="period-card current">
         <span class="dot"></span>
 
         <div>
-          <strong id="period-prev-year-title">전년 같은 달</strong>
-          <p id="period-prev-year">-</p>
+          <strong id="period-current-title">당월</strong>
+          <p id="period-current">-</p>
         </div>
       </article>
     </section>
@@ -213,7 +230,7 @@
             <div>
               <span class="legend-dot green"></span>
               <b>관리 관련 지표</b>
-              <p>미연결콜 · 리뷰 · 부정리뷰 · 톡톡상담</p>
+              <p>미연결콜 · 리뷰</p>
             </div>
           </div>
         </div>
@@ -227,6 +244,10 @@
               예약신청만 따로 보지 않고 연결콜과 함께 비교합니다.
             </p>
           </div>
+          <div class="conversion-legend" role="group" aria-label="전환 지표 표시">
+            <button type="button" id="conversion-toggle-conn" aria-pressed="true"><i class="conversion-swatch call" aria-hidden="true"></i>연결콜</button>
+            <button type="button" id="conversion-toggle-res_req" aria-pressed="true"><i class="conversion-swatch reservation" aria-hidden="true"></i>예약신청</button>
+          </div>
         </div>
 
         <div class="chart-box tall">
@@ -237,9 +258,9 @@
       <section class="panel chart-side compare-card">
         <div class="panel-header">
           <div>
-            <h2>전월 / 전년 같은 달 비교</h2>
+            <h2 id="compareChartTitle">전년 · 전월 · 당월 비교</h2>
             <p class="panel-subtitle">
-              선택 지표의 현재 · 전월 · 전년 값을 비교합니다.
+              선택 지표의 전년 · 전월 · 선택 기간 값을 비교합니다.
             </p>
           </div>
 
@@ -256,14 +277,32 @@
 
     </main>
 
+    <section class="audience-section" aria-label="유입 및 고객 구성">
+      <div class="audience-section-heading">
+        <h2>유입과 고객 구성</h2>
+        <p>선택한 기간·팀·매장·담당자의 유입 및 성별 자료를 요약합니다.</p>
+      </div>
+      <div class="audience-grid">
+        <article class="audience-card source-kpi-card" id="source-route-card"></article>
+        <article class="audience-card source-kpi-card" id="source-keyword-card"></article>
+        <article class="audience-card">
+          <div class="audience-card-heading">
+            <span class="audience-icon gender-icon">◌</span>
+            <div><h3>성별 조회 비율</h3><p>플레이스 페이지를 조회한 고객의 성별 비율</p></div>
+          </div>
+          <div id="demographic-summary"></div>
+        </article>
+      </div>
+    </section>
+
     <section class="insight-panel">
       <div class="insight-title">
         <span>💡</span>
-        <strong>선택 월 인사이트</strong>
+        <strong>선택 기간 인사이트</strong>
       </div>
 
       <p id="weekly-insight">
-        데이터를 불러오면 선택 월의 핵심 변화가 자동으로 표시됩니다.
+        데이터를 불러오면 선택 기간의 핵심 변화가 자동으로 표시됩니다.
       </p>
 
       <button
@@ -284,23 +323,16 @@
             선택한 조회 기준에 맞춰 매장별 합산 데이터가 표시됩니다.
           </p>
         </div>
+        <div class="ranking-control">
+          <label for="rankingMetricSelect">순위 기준</label>
+          <select id="rankingMetricSelect" aria-label="매장 순위 기준 지표"></select>
+        </div>
       </div>
 
       <div class="table-scroll">
-        <table>
+        <table class="ranked-table">
           <thead>
-            <tr>
-              <th>매장명</th>
-              <th>담당자</th>
-              <th>조회수</th>
-              <th>연결콜</th>
-              <th>미연결콜</th>
-              <th>예약유입</th>
-              <th>예약신청</th>
-              <th>리뷰</th>
-              <th>부정리뷰</th>
-              <th>톡톡상담</th>
-            </tr>
+            <tr id="detail-head"></tr>
           </thead>
 
           <tbody id="detail-tbody"></tbody>
@@ -308,8 +340,19 @@
       </div>
     </section>
 
+    <details class="table-panel raw-items-panel">
+      <summary>수집 원본 항목 보기 <span id="raw-items-count"></span></summary>
+      <p class="panel-subtitle">선택한 기간·팀·매장·담당자의 원본 값을 시트 열 이름 그대로 표시합니다. 비어 있는 열은 제외합니다.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr id="raw-items-head"></tr></thead>
+          <tbody id="raw-items-body"></tbody>
+        </table>
+      </div>
+    </details>
+
     <div class="empty-state" id="empty-state" hidden>
-      데이터를 불러오지 못했습니다. Apps Script 웹앱 URL 또는 배포 권한을 확인해주세요.
+      데이터를 불러오지 못했습니다. Apps Script 배포 권한을 확인해주세요.
     </div>
 
   </div>
@@ -332,19 +375,23 @@
 
       <p class="modal-eyebrow" id="modalGroup">지표 상세</p>
       <h2 id="modalTitle">-</h2>
-      <div class="modal-value" id="modalValue">-</div>
-
       <div class="modal-stats">
+        <div>
+          <span>전년</span>
+          <strong id="modalPrevYear">-</strong>
+          <p id="modalPrevYearRate">-</p>
+        </div>
+
         <div>
           <span>전월</span>
           <strong id="modalPrevMonth">-</strong>
           <p id="modalPrevMonthRate">-</p>
         </div>
 
-        <div>
-          <span>전년 같은 달</span>
-          <strong id="modalPrevYear">-</strong>
-          <p id="modalPrevYearRate">-</p>
+        <div class="modal-current">
+          <span id="modalCurrentLabel">당월</span>
+          <strong id="modalValue">-</strong>
+          <p>선택한 기간의 합계</p>
         </div>
       </div>
 

@@ -3,11 +3,11 @@
 // 기존 대시보드 디자인을 유지하면서 월별 원본 데이터 한 행을 직접 읽습니다.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 새 Google 시트에 연결한 Apps Script 웹앱의 /exec 주소로 교체합니다.
-// 기존 tna-week의 주소를 복사하지 마세요.
-const DATA_URL = '__NEW_APPS_SCRIPT_WEB_APP_URL__';
+// 실제 보고서는 Apps Script의 Report.html에서 실행하고, 시트는 서버 함수로 읽습니다.
+// GitHub Pages 주소로 접속하면 아래 웹 앱으로 이동합니다.
+const REPORT_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzjGM91OHhnBMNEjuWwuCZVQDxiFq5VVM3aunn2EwHKUd5HieHgoVCdAe5xnuitDkyYZg/exec';
 
-const REPORT_PIN = '0517';
+const REPORT_PIN = '8236';
 const PIN_SESSION_KEY = 'hankook_month_report_pin_authenticated';
 
 let reportInitialized = false;
@@ -18,14 +18,29 @@ let weekKeys = [];
 let monthKeys = [];
 let STORES = [];
 let MANAGERS = [];
+let TEAMS = [];
+let RAW_HEADERS = [];
+let ACTIVE_METRICS = [];
 let charts = {};
 let lastRenderData = null;
+const CONVERSION_METRICS = ['conn', 'res_req'];
+const conversionVisible = { conn: true, res_req: true };
 
 const METRICS = ['views', 'conn', 'miss', 'res_in', 'res_req', 'review', 'neg_review', 'chat'];
+const REPORT_METRICS = ['views', 'conn', 'miss', 'res_in', 'res_req', 'review'];
+const TEAM_SUFFIX = ' PC/LT팀';
+// 시트 열의 의미는 고정입니다. 값이 0.73이면 해당 성별의 비율은 73%입니다.
+const GENDER_SOURCE_HEADERS = Object.freeze({ male: '성별 01', female: '성별 02' });
+
+function teamDisplayName(team) {
+  const name = text(team);
+  if (!name) return '-';
+  return /\sPC\/LT팀$/.test(name) ? name : `${name}${TEAM_SUFFIX}`;
+}
 
 const METRIC_DEFS = {
   views: {
-    label: '플레이스 조회수',
+    label: '조회수',
     group: '노출 관련 지표',
     chip: '노출',
     groupKey: 'exposure',
@@ -117,8 +132,8 @@ const GROUPS = [
     key: 'manage',
     label: '관리 관련 지표',
     color: '#32d583',
-    metrics: ['miss', 'review', 'neg_review', 'chat'],
-    summary: '미연결콜 · 리뷰 · 부정리뷰 · 톡톡상담'
+    metrics: ['miss', 'review'],
+    summary: '미연결콜 · 리뷰'
   }
 ];
 
@@ -129,6 +144,20 @@ function $(id) {
 function num(value) {
   if (value === null || value === undefined || value === '') return 0;
   return Number(String(value).replace(/,/g, '').trim()) || 0;
+}
+
+function metricNumber(value) {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const parsed = Number(String(value).replace(/,/g, '').trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function hasValue(value) {
+  return value !== null && value !== undefined && String(value).trim() !== '';
+}
+
+function fmtMetric(value) {
+  return value === null || value === undefined ? '—' : fmt(value);
 }
 
 function text(value) {
@@ -148,6 +177,10 @@ function fmt(value) {
 
 function pad2(value) {
   return String(value).padStart(2, '0');
+}
+
+function currentPeriodLabel(monthCount) {
+  return monthCount === 1 ? '당월' : '선택 기간';
 }
 
 function dateText(value) {
@@ -175,11 +208,6 @@ function dateText(value) {
 
   return raw.slice(0, 10);
 }
-
-function cacheBustUrl(url) {
-  return url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
-}
-
 
 function normalizeFieldKey(value) {
   return String(value || '')
@@ -254,7 +282,7 @@ function pickRaw(row, keys) {
 }
 
 function monthParts(row) {
-  const yearText = text(pickRaw(row, ['년', '연도', 'yr', 'year']));
+  const yearText = text(pickRaw(row, ['연', '년', '연도', 'yr', 'year']));
   const monthText = text(pickRaw(row, ['월', '월별', 'mo', 'month']));
   const rawYear = Number(yearText.replace(/[^0-9]/g, '')) || 0;
   const year = rawYear >= 20 && rawYear <= 99 ? 2000 + rawYear : rawYear;
@@ -262,39 +290,12 @@ function monthParts(row) {
   if (year >= 2000 && month >= 1 && month <= 12) return { year, month };
 
   const period = text(pickRaw(row, ['연월', '년월', '기준월', '기간', 'period', 'year_month'])) || yearText;
+  const periodMonth = period.match(/^M\s*(0?[1-9]|1[0-2])$/i);
+  if (year >= 2000 && periodMonth) return { year, month: Number(periodMonth[1]) };
   const match = period.match(/(20\d{2}|\d{2})\s*(?:년|[./-])\s*(1[0-2]|0?[1-9])(?:\s*월)?/);
   return match
     ? { year: match[1].length === 2 ? 2000 + Number(match[1]) : Number(match[1]), month: Number(match[2]) }
     : { year: 0, month: 0 };
-}
-
-async function fetchJsonWithCache(url, cacheKey, ttlMs = 5 * 60 * 1000, forceFresh = false) {
-  const now = Date.now();
-
-  if (!forceFresh) {
-    try {
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (parsed?.ts && now - parsed.ts < ttlMs) return parsed.data;
-      }
-    } catch (e) {
-      console.warn('캐시 읽기 실패:', e);
-    }
-  }
-
-  const res = await fetch(forceFresh ? cacheBustUrl(url) : url);
-  if (!res.ok) throw new Error('데이터 요청 실패: ' + res.status);
-
-  const data = await res.json();
-
-  try {
-    localStorage.setItem(cacheKey, JSON.stringify({ ts: now, data }));
-  } catch (e) {
-    console.warn('캐시 저장 실패:', e);
-  }
-
-  return data;
 }
 
 function rowsFromPayload(data) {
@@ -358,17 +359,19 @@ function normalizePlaceRow(r) {
     start: dateText(pickRaw(r, ['시작일(월)', '시작일', 'start', 'start_date', 'startDate'])),
     end: dateText(pickRaw(r, ['종료일(일)', '종료일', 'end', 'end_date', 'endDate'])),
     store: text(pickRaw(r, ['매장명', '매장', 'store', 'store_name', 'storeName'])),
+    team: text(pickRaw(r, ['팀구분', '팀', 'team', 'teamName'])),
     manager: text(pickRaw(r, ['담당자', '담당자명', '담당자 이름', '매장 담당자', '담당', 'manager', 'managerName', 'person_in_charge'])),
-    views: num(pickRaw(r, ['조회수', '플레이스 조회수', 'views', 'place_views', 'placeViews'])),
-    conn: num(pickRaw(r, ['연결콜', '연결 콜', 'conn', 'connected_call', 'connectedCall'])),
-    miss: num(pickRaw(r, ['미연결콜', '미연결 콜', 'miss', 'missed_call', 'missedCall'])),
-    res_in: num(pickRaw(r, ['예약유입', '예약 유입', 'res_in', 'resIn', 'reservation_in', 'reservationIn'])),
-    res_req: num(pickRaw(r, ['예약신청', '예약 신청', 'res_req', 'resReq', 'reservation_request', 'reservationRequest'])),
-    review: num(pickRaw(r, ['리뷰', '리뷰수', 'review', 'reviews'])),
+    views: metricNumber(pickRaw(r, ['조회수', '플레이스 조회수', 'views', 'place_views', 'placeViews'])),
+    conn: metricNumber(pickRaw(r, ['연결콜', '연결 콜', 'conn', 'connected_call', 'connectedCall'])),
+    miss: metricNumber(pickRaw(r, ['미연결콜', '미연결 콜', 'miss', 'missed_call', 'missedCall'])),
+    res_in: metricNumber(pickRaw(r, ['예약유입', '예약 유입', 'res_in', 'resIn', 'reservation_in', 'reservationIn'])),
+    res_req: metricNumber(pickRaw(r, ['예약신청', '예약 신청', 'res_req', 'resReq', 'reservation_request', 'reservationRequest'])),
+    review: metricNumber(pickRaw(r, ['리뷰', '리뷰수', 'review', 'reviews'])),
     // 부정리뷰는 명시적인 부정리뷰 계열 컬럼이 있을 때만 사용합니다.
     // 컬럼명이 조금 달라도 자동으로 찾아오되, 일반 리뷰/톡톡상담 값이 밀려 들어가지 않게 합니다.
-    neg_review: negReviewValue === undefined ? 0 : num(negReviewValue),
-    chat: num(pickRaw(r, ['톡톡상담', '톡톡 상담', '톡톡', '톡톡상담수', '네이버톡톡', 'chat', 'talk', 'talktalk', 'talkTalk', 'naver_talk']))
+    neg_review: metricNumber(negReviewValue),
+    chat: metricNumber(pickRaw(r, ['실시간상담', '톡톡상담', '톡톡 상담', '톡톡', '톡톡상담수', '네이버톡톡', 'chat', 'talk', 'talktalk', 'talkTalk', 'naver_talk'])),
+    source: r
   };
 }
 
@@ -378,19 +381,26 @@ function normalizeRows(data) {
     .filter(r => r.yr && r.mo >= 1 && r.mo <= 12 && r.store && !/^(합계|총합계|총계|전체)$/.test(r.store));
 }
 
-async function loadData(forceFresh = false) {
-  if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(DATA_URL)) {
-    throw new Error('새 Google Apps Script의 /exec 주소가 설정되지 않았습니다.');
+async function loadData() {
+  if (!window.google?.script?.run) {
+    throw new Error('실제 데이터는 Google Apps Script의 보고서에서 확인할 수 있습니다.');
   }
-  const data = await fetchJsonWithCache(DATA_URL, 'hankook_month_dashboard_rows_v1', 5 * 60 * 1000, forceFresh);
+  const data = await new Promise((resolve, reject) => {
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(reject).getReportData();
+  });
   if (data?.error) throw new Error(String(data.error));
   const rows = normalizeRows(data);
   if (!rows.length) {
-    throw new Error('월별 데이터가 없습니다. 시트의 년·월(또는 연월)·매장명 열을 확인해주세요.');
+    throw new Error('월별 데이터가 없습니다. main 시트의 연·월·매장명 열을 확인해주세요.');
   }
 
   RAW.length = 0;
   rows.forEach(row => RAW.push(row));
+
+  const suppliedHeaders = Array.isArray(data?.headers) ? data.headers.map(text).filter(Boolean) : [];
+  RAW_HEADERS = [...new Set([...suppliedHeaders, ...RAW.flatMap(row => Object.keys(row.source || {}))])]
+    .filter(header => RAW.some(row => hasValue(row.source?.[header])));
+  ACTIVE_METRICS = REPORT_METRICS.filter(key => RAW.some(row => row[key] !== null));
 
   rebuildMetaFromRaw();
 }
@@ -430,20 +440,23 @@ function rebuildMetaFromRaw() {
 
   STORES = [...new Set(RAW.map(r => r.store).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
   MANAGERS = [...new Set(RAW.map(r => r.manager).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+  TEAMS = [...new Set(RAW.map(r => r.team).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
 }
 
 function sumRows(rows) {
   const s = {};
-  METRICS.forEach(key => { s[key] = 0; });
-  rows.forEach(r => METRICS.forEach(key => { s[key] += num(r[key]); }));
+  METRICS.forEach(key => { s[key] = null; });
+  rows.forEach(r => METRICS.forEach(key => {
+    if (r[key] !== null && r[key] !== undefined) s[key] = (s[key] ?? 0) + r[key];
+  }));
   return s;
 }
 
 function hasAnyData(sum) {
-  return METRICS.some(key => num(sum[key]) > 0);
+  return ACTIVE_METRICS.some(key => sum[key] !== null && sum[key] !== undefined);
 }
 
-function getRowsByWeekKey(weekKey, store = 'ALL', manager = 'ALL') {
+function getRowsByWeekKey(weekKey, store = 'ALL', manager = 'ALL', team = 'ALL') {
   const meta = weekMeta[weekKey];
   if (!meta) return [];
 
@@ -451,27 +464,53 @@ function getRowsByWeekKey(weekKey, store = 'ALL', manager = 'ALL') {
     r.yr === meta.yr &&
     r.mo === meta.mo &&
     r.wk === meta.wk &&
+    (team === 'ALL' || r.team === team) &&
     (store === 'ALL' || r.store === store) &&
     (manager === 'ALL' || r.manager === manager)
   );
 }
 
-function getRowsByMonthKey(monthKey, store = 'ALL', manager = 'ALL') {
+function getRowsByMonthKey(monthKey, store = 'ALL', manager = 'ALL', team = 'ALL') {
   const [yr, mo] = String(monthKey || '').split('-').map(Number);
   if (!yr || !mo) return [];
 
   return RAW.filter(r =>
     r.yr === yr &&
     r.mo === mo &&
+    (team === 'ALL' || r.team === team) &&
     (store === 'ALL' || r.store === store) &&
     (manager === 'ALL' || r.manager === manager)
   );
 }
 
-function getRowsByPeriod(mode, key, store = 'ALL', manager = 'ALL') {
+function monthOrdinal(monthKey) {
+  const [year, month] = String(monthKey || '').split('-').map(Number);
+  return year >= 2000 && month >= 1 && month <= 12 ? year * 12 + month - 1 : NaN;
+}
+
+function shiftMonthKey(monthKey, offset) {
+  const shifted = monthOrdinal(monthKey) + offset;
+  if (!Number.isFinite(shifted)) return '';
+  return `${Math.floor(shifted / 12)}-${shifted % 12 + 1}`;
+}
+
+function getRowsByMonthRange(startKey, endKey, store = 'ALL', manager = 'ALL', team = 'ALL') {
+  const start = monthOrdinal(startKey);
+  const end = monthOrdinal(endKey);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) return [];
+  return RAW.filter(row => {
+    const month = row.yr * 12 + row.mo - 1;
+    return month >= start && month <= end &&
+      (team === 'ALL' || row.team === team) &&
+      (store === 'ALL' || row.store === store) &&
+      (manager === 'ALL' || row.manager === manager);
+  });
+}
+
+function getRowsByPeriod(mode, key, store = 'ALL', manager = 'ALL', team = 'ALL') {
   return mode === 'MONTH'
-    ? getRowsByMonthKey(key, store, manager)
-    : getRowsByWeekKey(key, store, manager);
+    ? getRowsByMonthKey(key, store, manager, team)
+    : getRowsByWeekKey(key, store, manager, team);
 }
 
 function getMonthMeta(monthKey) {
@@ -485,6 +524,23 @@ function getMonthMeta(monthKey) {
     short: `${String(yr).slice(-2)}.${pad2(mo)}`,
     start: `${yr}-${pad2(mo)}-01`,
     end: `${yr}-${pad2(mo)}-${pad2(new Date(yr, mo, 0).getDate())}`
+  };
+}
+
+function getMonthRangeMeta(startKey, endKey) {
+  const first = getMonthMeta(startKey);
+  const last = getMonthMeta(endKey);
+  const monthCount = monthOrdinal(endKey) - monthOrdinal(startKey) + 1;
+  return {
+    key: endKey,
+    startKey,
+    endKey,
+    monthCount,
+    yr: last.yr,
+    mo: last.mo,
+    label: startKey === endKey ? first.label : `${first.label} ~ ${last.label}`,
+    start: first.start,
+    end: last.end
   };
 }
 
@@ -540,6 +596,7 @@ function prevYearKeyForMonth(monthKey) {
 }
 
 function deltaRate(current, previous, higher = true) {
+  if (current === null || current === undefined || previous === null || previous === undefined) return null;
   const prev = num(previous);
   if (!prev) return null;
 
@@ -559,20 +616,22 @@ function rateHtml(current, previous, higher) {
   return `<span class="${cls}">${arrow} ${Math.abs(rate.value).toFixed(1)}%</span>`;
 }
 
-function metricSelectOptionsHtml() {
-  return METRICS.map(key => `<option value="${key}">${METRIC_DEFS[key].label}</option>`).join('');
+function metricSelectOptionsHtml(metrics) {
+  return metrics.map(key => `<option value="${key}">${METRIC_DEFS[key].label}</option>`).join('');
 }
 
-function fillMetricSelects() {
+function fillMetricSelects(metrics = REPORT_METRICS) {
   const trend = $('trendMetricSelect');
   const compare = $('compareMetricSelect');
   if (trend) {
-    trend.innerHTML = metricSelectOptionsHtml();
-    trend.value = 'views';
+    const selected = trend.value;
+    trend.innerHTML = metricSelectOptionsHtml(metrics);
+    trend.value = metrics.includes(selected) ? selected : (metrics.includes('views') ? 'views' : metrics[0] || '');
   }
   if (compare) {
-    compare.innerHTML = metricSelectOptionsHtml();
-    compare.value = 'views';
+    const selected = compare.value;
+    compare.innerHTML = metricSelectOptionsHtml(metrics);
+    compare.value = metrics.includes(selected) ? selected : (metrics.includes('views') ? 'views' : metrics[0] || '');
   }
 }
 
@@ -585,80 +644,119 @@ function updatePeriodModeUI() {
 }
 
 function initSelects() {
+  const selTeam = $('sel-team');
   const selStore = $('sel-store');
   const selManager = $('sel-manager');
-  const selMonth = $('sel-month');
+  const selMonthStart = $('sel-month-start');
+  const selMonthEnd = $('sel-month-end');
 
-  if (!selStore || !selManager || !selMonth) return;
+  if (!selTeam || !selStore || !selManager || !selMonthStart || !selMonthEnd) return;
 
-  selStore.innerHTML = '<option value="ALL">전체 매장</option>';
-  STORES.forEach(store => {
-    selStore.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(store)}">${escapeHtml(store)}</option>`);
-  });
+  selTeam.innerHTML = '<option value="ALL">전체 팀</option>';
+  TEAMS.forEach(team => selTeam.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(team)}">${escapeHtml(teamDisplayName(team))}</option>`));
+  updateDependentFilterOptions();
 
-  selManager.innerHTML = '<option value="ALL">전체 담당자</option>';
-  MANAGERS.forEach(manager => {
-    selManager.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(manager)}">${escapeHtml(manager)}</option>`);
-  });
-
-  selMonth.innerHTML = '';
+  selMonthStart.innerHTML = '';
+  selMonthEnd.innerHTML = '';
   monthKeys.forEach(key => {
     const [yr, mo] = key.split('-').map(Number);
-    selMonth.insertAdjacentHTML('beforeend', `<option value="${key}">${yr}년 ${mo}월</option>`);
+    const option = `<option value="${key}">${yr}년 ${mo}월</option>`;
+    selMonthStart.insertAdjacentHTML('beforeend', option);
+    selMonthEnd.insertAdjacentHTML('beforeend', option);
   });
 
-  selMonth.value = [...monthKeys].reverse().find(key => hasAnyData(sumRows(getRowsByMonthKey(key))))
+  const latestMonth = [...monthKeys].reverse().find(key => hasAnyData(sumRows(getRowsByMonthKey(key))))
     || monthKeys[monthKeys.length - 1] || '';
+  selMonthStart.value = latestMonth;
+  selMonthEnd.value = latestMonth;
 
-  selStore.onchange = renderDashboard;
+  selTeam.onchange = () => { updateDependentFilterOptions(); renderDashboard(); };
+  selStore.onchange = () => { updateManagerOptions(); renderDashboard(); };
   selManager.onchange = renderDashboard;
 
-  selMonth.onchange = renderDashboard;
+  selMonthStart.onchange = () => {
+    if (monthOrdinal(selMonthStart.value) > monthOrdinal(selMonthEnd.value)) selMonthEnd.value = selMonthStart.value;
+    renderDashboard();
+  };
+  selMonthEnd.onchange = () => {
+    if (monthOrdinal(selMonthEnd.value) < monthOrdinal(selMonthStart.value)) selMonthStart.value = selMonthEnd.value;
+    renderDashboard();
+  };
 
   const trendMetricSelect = $('trendMetricSelect');
   const compareMetricSelect = $('compareMetricSelect');
+  const rankingMetricSelect = $('rankingMetricSelect');
   if (trendMetricSelect) trendMetricSelect.onchange = renderDashboard;
   if (compareMetricSelect) compareMetricSelect.onchange = renderDashboard;
+  if (rankingMetricSelect) {
+    const previousMetric = rankingMetricSelect.value;
+    rankingMetricSelect.innerHTML = metricSelectOptionsHtml(REPORT_METRICS);
+    rankingMetricSelect.value = REPORT_METRICS.includes(previousMetric) ? previousMetric : 'views';
+    rankingMetricSelect.onchange = renderDashboard;
+  }
 
   updatePeriodModeUI();
 }
 
-function renderPeriodCards(mode, meta, prevMoMeta, prevYrMeta) {
-  const isMonth = mode === 'MONTH';
-
-  if ($('period-current-title')) $('period-current-title').textContent = isMonth ? '선택 월별 조회' : '선택 주간 조회';
-  if ($('period-prev-month-title')) $('period-prev-month-title').textContent = isMonth ? '전월' : '전월 같은 주차';
-  if ($('period-prev-year-title')) $('period-prev-year-title').textContent = isMonth ? '전년 같은 월' : '전년 같은 기간';
-
-  const rangeText = meta.start && meta.end ? `${meta.start} ~ ${meta.end}` : meta.label;
-  const currentText = isMonth
-    ? `${rangeText}<br>${meta.label} 전체 합산 기준`
-    : `${rangeText}<br>월요일~일요일 1주 기준`;
-
-  if ($('period-current')) $('period-current').innerHTML = currentText;
-  if ($('header-period')) $('header-period').textContent = isMonth
-    ? `${meta.label} 전체 · 월별 조회`
-    : `${rangeText} · ${meta.mo}월 ${meta.wk}주차`;
-
-  if ($('period-prev-month')) {
-    $('period-prev-month').innerHTML = prevMoMeta
-      ? `${prevMoMeta.start && prevMoMeta.end ? `${prevMoMeta.start} ~ ${prevMoMeta.end}` : prevMoMeta.label}<br>${isMonth ? '전월 전체 합산' : '전월 같은 주차'}`
-      : '비교 데이터 없음';
-  }
-
-  if ($('period-prev-year')) {
-    $('period-prev-year').innerHTML = prevYrMeta
-      ? `${prevYrMeta.start && prevYrMeta.end ? `${prevYrMeta.start} ~ ${prevYrMeta.end}` : prevYrMeta.label}<br>${isMonth ? '전년 같은 월 전체' : '전년 같은 기간'}`
-      : '비교 데이터 없음';
-  }
+function updateOptions(select, values, allLabel) {
+  if (!select) return;
+  const previous = select.value;
+  select.innerHTML = `<option value="ALL">${allLabel}</option>`;
+  values.forEach(value => select.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`));
+  select.value = values.includes(previous) ? previous : 'ALL';
 }
 
-function renderKpiCards(cur, prevMo, prevYr) {
+function updateManagerOptions() {
+  const team = $('sel-team')?.value || 'ALL';
+  const store = $('sel-store')?.value || 'ALL';
+  const managers = [...new Set(RAW.filter(row => (team === 'ALL' || row.team === team) &&
+    (store === 'ALL' || row.store === store)).map(row => row.manager).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'ko'));
+  updateOptions($('sel-manager'), managers, '전체 담당자');
+}
+
+function updateDependentFilterOptions() {
+  const team = $('sel-team')?.value || 'ALL';
+  const stores = [...new Set(RAW.filter(row => team === 'ALL' || row.team === team)
+    .map(row => row.store).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+  updateOptions($('sel-store'), stores, '전체 매장');
+  updateManagerOptions();
+}
+
+function renderManagerSummary(state) {
+  const summary = $('manager-summary');
+  if (!summary) return;
+  summary.hidden = state.manager === 'ALL';
+  if (summary.hidden) return;
+
+  const rows = getRowsByMonthRange(state.startKey, state.endKey, 'ALL', state.manager, state.team);
+  const stores = [...new Set(rows.map(row => row.store).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+  $('manager-summary-title').textContent = `${state.manager} · ${stores.length}개 매장`;
+  $('manager-summary-stores').innerHTML = stores.length
+    ? stores.map(store => `<span class="manager-store-chip">${escapeHtml(store)}</span>`).join('')
+    : '<span class="no-source-data">선택 기간에 수집된 담당 매장이 없습니다.</span>';
+}
+
+function renderPeriodCards(mode, meta, prevMoMeta, prevYrMeta) {
+  const periodText = (period, caption) =>
+    `${period.start} ~ ${period.end}<br>${caption} (${period.monthCount}개월 합계)`;
+
+  $('period-prev-year-title').textContent = '전년';
+  $('period-prev-month-title').textContent = '전월';
+  $('period-current-title').textContent = currentPeriodLabel(meta.monthCount);
+  $('period-prev-year').innerHTML = periodText(prevYrMeta, '전년 같은 기간');
+  $('period-prev-month').innerHTML = periodText(prevMoMeta, '직전 같은 길이의 기간');
+  $('period-current').innerHTML = periodText(meta, '선택 조건');
+  $('header-period').textContent = `${meta.label} · ${meta.monthCount}개월 조회`;
+}
+
+function renderKpiCards(cur, prevMo, prevYr, metrics, rows, monthCount = 1) {
   const grid = $('kpi-grid');
   if (!grid) return;
 
-  grid.innerHTML = METRICS.map(key => {
+  const metricCards = metrics.map(key => {
     const def = METRIC_DEFS[key];
+    const covered = rows.filter(row => row[key] !== null).length;
     return `
       <article class="kpi-card ${def.groupKey}" data-metric="${key}" tabindex="0" role="button" aria-label="${def.label} 상세 보기">
         <div class="kpi-head">
@@ -672,25 +770,36 @@ function renderKpiCards(cur, prevMo, prevYr) {
           <div class="kpi-chip">${def.chip}</div>
         </div>
 
-        <div class="kpi-value">${fmt(cur[key])}</div>
-
-        <div class="kpi-rates">
-          <div class="kpi-rate-box">
-            <span class="rate-label">전월</span>
-            <span class="rate-value">${prevMo ? fmt(prevMo[key]) : '-'}</span>
-            ${rateHtml(cur[key], prevMo ? prevMo[key] : null, def.higher)}
+        ${covered < rows.length ? `<div class="kpi-coverage">수집 ${covered}/${rows.length}건 합계</div>` : ''}
+        <div class="kpi-period-grid">
+          <div class="kpi-period-column">
+            <div class="kpi-period-box" title="전년 같은 기간">
+              <span class="rate-label">전년</span>
+              <strong>${prevYr ? fmtMetric(prevYr[key]) : '—'}</strong>
+            </div>
+            <div class="kpi-period-change">전년 대비 ${rateHtml(cur[key], prevYr ? prevYr[key] : null, def.higher)}</div>
           </div>
-          <div class="kpi-rate-box">
-            <span class="rate-label">전년 같은 달</span>
-            <span class="rate-value">${prevYr ? fmt(prevYr[key]) : '-'}</span>
-            ${rateHtml(cur[key], prevYr ? prevYr[key] : null, def.higher)}
+          <div class="kpi-period-column">
+            <div class="kpi-period-box" title="${monthCount > 1 ? '직전 같은 길이의 기간' : '전월'}">
+              <span class="rate-label">전월</span>
+              <strong>${prevMo ? fmtMetric(prevMo[key]) : '—'}</strong>
+            </div>
+            <div class="kpi-period-change">전월 대비 ${rateHtml(cur[key], prevMo ? prevMo[key] : null, def.higher)}</div>
+          </div>
+          <div class="kpi-period-column">
+            <div class="kpi-period-box current" title="선택 기간">
+              <span class="rate-label">${currentPeriodLabel(monthCount)}</span>
+              <strong>${fmtMetric(cur[key])}</strong>
+            </div>
           </div>
         </div>
       </article>
     `;
   }).join('');
 
-  document.querySelectorAll('.kpi-card').forEach(card => {
+  grid.innerHTML = metricCards;
+
+  document.querySelectorAll('.kpi-card[data-metric]').forEach(card => {
     const handler = () => openKpiModal(card.dataset.metric);
     card.addEventListener('click', handler);
     card.addEventListener('keydown', e => {
@@ -707,11 +816,13 @@ const chartValueLabelPlugin = {
   afterDatasetsDraw(chart, args, pluginOptions) {
     if (pluginOptions && pluginOptions.display === false) return;
 
-    const { ctx } = chart;
+    const { ctx, chartArea } = chart;
+    if (!chartArea) return;
     ctx.save();
     ctx.font = '700 11px Pretendard, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
+    const placedLabels = [];
 
     chart.data.datasets.forEach((dataset, datasetIndex) => {
       const meta = chart.getDatasetMeta(datasetIndex);
@@ -722,14 +833,27 @@ const chartValueLabelPlugin = {
         if (value === null || value === undefined || Number.isNaN(Number(value))) return;
 
         const pos = element.tooltipPosition();
-        const y = Math.max(18, pos.y - 8);
         const label = fmt(value);
+        const width = ctx.measureText(label).width;
+        const x = Math.max(chartArea.left + width / 2 + 3, Math.min(chartArea.right - width / 2 - 3, pos.x));
+        let y = Math.max(chartArea.top + 16, Math.min(chartArea.bottom - 5, pos.y - 8));
+        const overlaps = candidate => placedLabels.some(box =>
+          x - width / 2 < box.right + 4 && x + width / 2 > box.left - 4 &&
+          candidate - 12 < box.bottom + 3 && candidate > box.top - 3);
+        if (overlaps(y)) {
+          const below = y + 17;
+          const above = y - 17;
+          if (below <= chartArea.bottom - 5 && !overlaps(below)) y = below;
+          else if (above >= chartArea.top + 16 && !overlaps(above)) y = above;
+          else return;
+        }
 
         ctx.lineWidth = 4;
         ctx.strokeStyle = 'rgba(2, 6, 23, .82)';
         ctx.fillStyle = '#f8fafc';
-        ctx.strokeText(label, pos.x, y);
-        ctx.fillText(label, pos.x, y);
+        ctx.strokeText(label, x, y);
+        ctx.fillText(label, x, y);
+        placedLabels.push({ left: x - width / 2, right: x + width / 2, top: y - 12, bottom: y });
       });
     });
 
@@ -771,7 +895,7 @@ function chartBaseOptions() {
     responsive: true,
     maintainAspectRatio: false,
     layout: {
-      padding: { top: 28, right: 10, bottom: 0, left: 0 }
+      padding: { top: 12, right: 10, bottom: 0, left: 0 }
     },
     plugins: {
       chartValueLabelPlugin: { display: true },
@@ -780,7 +904,8 @@ function chartBaseOptions() {
           color: '#d6e4f3',
           font: { size: 13, family: 'Pretendard', weight: '800' },
           boxWidth: 12,
-          boxHeight: 12
+          boxHeight: 12,
+          padding: 22
         }
       },
       tooltip: {
@@ -799,6 +924,7 @@ function chartBaseOptions() {
       },
       y: {
         beginAtZero: true,
+        grace: '20%',
         ticks: { color: '#cbd5e1', font: { size: 12, family: 'Pretendard', weight: '700' } },
         grid: { color: 'rgba(148, 163, 184, .13)' }
       }
@@ -814,11 +940,12 @@ function makeChart(id, config) {
   charts[id] = new Chart(canvas.getContext('2d'), config);
 }
 
-function getTrendKeys(mode, currentKey) {
+function getTrendKeys(mode, currentKey, startKey = currentKey) {
   const source = mode === 'MONTH' ? monthKeys : weekKeys;
   const currentIndex = source.indexOf(currentKey);
   if (currentIndex < 0) return [];
-  return source.slice(Math.max(0, currentIndex - 6), currentIndex + 1);
+  const startIndex = Math.max(0, source.indexOf(startKey));
+  return source.slice(Math.max(0, startIndex - (startKey === currentKey ? 6 : 3)), currentIndex + 1);
 }
 
 function labelForPeriodKey(mode, key) {
@@ -826,35 +953,76 @@ function labelForPeriodKey(mode, key) {
   return weekMeta[key]?.short || key;
 }
 
-function renderGroupSummary(cur) {
+function renderGroupSummary(cur, metrics) {
   const target = $('group-summary');
   if (!target) return;
 
-  target.innerHTML = GROUPS.map(group => {
-    const rows = group.metrics.map(metricKey => `${METRIC_DEFS[metricKey].label} ${fmt(cur[metricKey])}`).join(' · ');
+  target.innerHTML = GROUPS.filter(group => group.metrics.some(key => metrics.includes(key))).map(group => {
+    const visible = group.metrics.filter(key => metrics.includes(key));
+    const rows = visible.map(metricKey => `${METRIC_DEFS[metricKey].label} ${fmtMetric(cur[metricKey])}`).join(' · ');
     const dotClass = group.key === 'exposure' ? 'orange' : group.key === 'convert' ? 'blue' : 'green';
 
     return `
       <div>
         <span class="legend-dot ${dotClass}"></span>
-        <b>${group.label}<span class="group-count">${group.metrics.length}개 항목</span></b>
+        <b>${group.label}<span class="group-count">${visible.length}개 항목</span></b>
         <p>${rows}</p>
       </div>
     `;
   }).join('');
 }
 
-function renderCharts(mode, cur, prevMo, prevYr, trendKeys, store, manager) {
-  const trendMetric = $('trendMetricSelect')?.value || 'views';
-  const compareMetric = $('compareMetricSelect')?.value || 'views';
+function syncConversionLegend(metrics = CONVERSION_METRICS) {
+  CONVERSION_METRICS.forEach(key => {
+    const button = $(`conversion-toggle-${key}`);
+    if (!button) return;
+    button.hidden = !metrics.includes(key);
+    button.setAttribute('aria-pressed', String(conversionVisible[key]));
+    button.classList.toggle('is-off', !conversionVisible[key]);
+  });
+}
+
+function toggleConversionMetric(key) {
+  if (!CONVERSION_METRICS.includes(key)) return;
+  conversionVisible[key] = !conversionVisible[key];
+  syncConversionLegend();
+
+  const chart = charts['chart-reservation'];
+  if (!chart) return;
+  const index = chart.data.datasets.findIndex(dataset => dataset.label === METRIC_DEFS[key].label);
+  if (index < 0) return;
+  chart.setDatasetVisibility(index, conversionVisible[key]);
+  chart.update();
+}
+
+function bindConversionLegend() {
+  CONVERSION_METRICS.forEach(key => {
+    $(`conversion-toggle-${key}`)?.addEventListener('click', () => toggleConversionMetric(key));
+  });
+  syncConversionLegend();
+}
+
+function renderCharts(mode, cur, prevMo, prevYr, trendKeys, store, manager, team, metrics, monthCount = 1) {
+  const trendMetric = $('trendMetricSelect')?.value || metrics[0];
+  const compareMetric = $('compareMetricSelect')?.value || metrics[0];
 
   const labels = trendKeys.map(key => labelForPeriodKey(mode, key));
-  const trendValues = trendKeys.map(key => sumRows(getRowsByPeriod(mode, key, store, manager))[trendMetric]);
-  const connValues = trendKeys.map(key => sumRows(getRowsByPeriod(mode, key, store, manager)).conn);
-  const resReqValues = trendKeys.map(key => sumRows(getRowsByPeriod(mode, key, store, manager)).res_req);
+  const trendSums = trendKeys.map(key => sumRows(getRowsByPeriod(mode, key, store, manager, team)));
+  const trendValues = trendSums.map(sum => sum[trendMetric]);
+  const conversionMetrics = CONVERSION_METRICS.filter(key => metrics.includes(key));
+  const groups = GROUPS.filter(group => group.metrics.some(key => metrics.includes(key)));
+
+  syncConversionLegend(conversionMetrics);
+
+  document.querySelector('.trend-card').hidden = !metrics.length;
+  document.querySelector('.compare-card').hidden = !metrics.length;
+  document.querySelector('.conversion-card').hidden = !conversionMetrics.length;
+  document.querySelector('.group-card').hidden = !groups.length;
+  if (!metrics.length) return;
 
   if ($('trendChartTitle')) $('trendChartTitle').textContent = mode === 'MONTH' ? '월별 지표 추이' : '주차별 지표 추이';
   if ($('conversionChartTitle')) $('conversionChartTitle').textContent = mode === 'MONTH' ? '월별 전환 지표 추이' : '주차별 전환 지표 추이';
+  if ($('compareChartTitle')) $('compareChartTitle').textContent = `전년 · 전월 · ${currentPeriodLabel(monthCount)} 비교`;
 
   makeChart('chart-trend', {
     type: 'line',
@@ -878,10 +1046,10 @@ function renderCharts(mode, cur, prevMo, prevYr, trendKeys, store, manager) {
   makeChart('chart-groups', {
     type: 'doughnut',
     data: {
-      labels: GROUPS.map(g => `${g.label} (${g.metrics.length}개)`),
+      labels: groups.map(g => `${g.label} (${g.metrics.filter(key => metrics.includes(key)).length}개)`),
       datasets: [{
-        data: GROUPS.map(g => g.metrics.length),
-        backgroundColor: GROUPS.map(g => g.color),
+        data: groups.map(g => g.metrics.filter(key => metrics.includes(key)).length),
+        backgroundColor: groups.map(g => g.color),
         borderWidth: 0
       }]
     },
@@ -891,7 +1059,7 @@ function renderCharts(mode, cur, prevMo, prevYr, trendKeys, store, manager) {
       cutout: '58%',
       plugins: {
         chartValueLabelPlugin: { display: false },
-        doughnutCenterTextPlugin: { text: `${METRICS.length}개`, subtext: '전체 지표' },
+        doughnutCenterTextPlugin: { text: `${metrics.length}개`, subtext: '보고 지표' },
         legend: { display: false },
         tooltip: {
           callbacks: {
@@ -906,190 +1074,327 @@ function renderCharts(mode, cur, prevMo, prevYr, trendKeys, store, manager) {
     }
   });
 
+  const reservationOptions = chartBaseOptions();
+  reservationOptions.plugins.legend.display = false;
   makeChart('chart-reservation', {
     type: 'bar',
     data: {
       labels,
-      datasets: [
-        {
-          label: '연결콜',
-          data: connValues,
-          backgroundColor: '#38a7ff',
-          borderRadius: 8
-        },
-        {
-          label: '예약신청',
-          data: resReqValues,
-          backgroundColor: '#ff7a00',
-          borderRadius: 8
-        }
-      ]
+      datasets: conversionMetrics.map(key => ({
+        label: METRIC_DEFS[key].label,
+        data: trendSums.map(sum => sum[key]),
+        backgroundColor: key === 'conn' ? '#38a7ff' : '#ff7a00',
+        hidden: !conversionVisible[key],
+        borderRadius: 8
+      }))
     },
-    options: chartBaseOptions()
+    options: reservationOptions
   });
 
   makeChart('chart-compare', {
     type: 'bar',
     data: {
-      labels: [mode === 'MONTH' ? '선택 월' : '선택 주', '전월', '전년 같은 달'],
+      labels: ['전년', '전월', currentPeriodLabel(monthCount)],
       datasets: [{
         label: METRIC_DEFS[compareMetric].label,
         data: [
-          cur[compareMetric] || 0,
-          prevMo ? prevMo[compareMetric] || 0 : 0,
-          prevYr ? prevYr[compareMetric] || 0 : 0
+          prevYr ? prevYr[compareMetric] : null,
+          prevMo ? prevMo[compareMetric] : null,
+          cur[compareMetric]
         ],
-        backgroundColor: ['#ff7a00', '#38a7ff', '#8b5cf6'],
+        backgroundColor: ['#8b5cf6', '#38a7ff', '#ff7a00'],
         borderRadius: 8
       }]
     },
     options: chartBaseOptions()
   });
 
-  renderGroupSummary(cur);
+  renderGroupSummary(cur, metrics);
 }
 
 function aggregateRowsByStoreManager(rows) {
   const map = new Map();
 
   rows.forEach(row => {
-    const key = `${row.store}__${row.manager || ''}`;
+    const key = JSON.stringify([row.team, row.store]);
     if (!map.has(key)) {
       map.set(key, {
+        team: row.team,
         store: row.store,
-        manager: row.manager || '',
-        views: 0,
-        conn: 0,
-        miss: 0,
-        res_in: 0,
-        res_req: 0,
-        review: 0,
-        neg_review: 0,
-        chat: 0
+        managers: new Set(),
+        ...Object.fromEntries(METRICS.map(metric => [metric, null]))
       });
     }
 
     const target = map.get(key);
+    if (row.manager) target.managers.add(row.manager);
     METRICS.forEach(metric => {
-      target[metric] += num(row[metric]);
+      if (row[metric] !== null) target[metric] = (target[metric] ?? 0) + row[metric];
     });
   });
 
-  return [...map.values()].sort((a, b) => {
-    const storeCompare = a.store.localeCompare(b.store, 'ko');
-    return storeCompare || a.manager.localeCompare(b.manager, 'ko');
-  });
+  return [...map.values()].map(row => ({
+    ...row,
+    manager: [...row.managers].sort((a, b) => a.localeCompare(b, 'ko')).join(', ')
+  }));
 }
 
-function renderDetailTable(rows, mode) {
+function renderDetailTable(rows, mode, metrics) {
   const tbody = $('detail-tbody');
   if (!tbody) return;
 
   const tableRows = aggregateRowsByStoreManager(rows);
   const total = sumRows(tableRows);
+  const rankMetric = REPORT_METRICS.includes($('rankingMetricSelect')?.value)
+    ? $('rankingMetricSelect').value : 'views';
+  const higherIsBetter = METRIC_DEFS[rankMetric].higher;
+  tableRows.sort((a, b) => {
+    if (a[rankMetric] === null) return b[rankMetric] === null ? a.store.localeCompare(b.store, 'ko') : 1;
+    if (b[rankMetric] === null) return -1;
+    return (higherIsBetter ? b[rankMetric] - a[rankMetric] : a[rankMetric] - b[rankMetric]) ||
+      a.store.localeCompare(b.store, 'ko');
+  });
 
   if ($('table-caption')) {
-    $('table-caption').textContent = mode === 'MONTH'
-      ? '선택한 월 전체 데이터를 매장별로 합산했습니다.'
-      : '선택한 월~일 주간 데이터를 매장별로 합산했습니다.';
+    $('table-caption').textContent = `선택 기간 매장별 합계 · ${METRIC_DEFS[rankMetric].label} ${higherIsBetter ? '높은' : '낮은'} 순 · 값이 없는 매장은 순위 제외`;
   }
 
-  const html = tableRows.map(r => `
-    <tr>
+  const headers = $('detail-head');
+  if (headers) headers.innerHTML = `<th>순위</th><th>팀</th><th>매장명</th><th>담당자</th>` +
+    metrics.map(key => `<th>${escapeHtml(METRIC_DEFS[key].label)}</th>`).join('');
+
+  let previousRank = 0;
+  const html = tableRows.map((r, index) => {
+    const rank = r[rankMetric] === null ? null
+      : (index && tableRows[index - 1][rankMetric] === r[rankMetric] ? previousRank : index + 1);
+    if (rank !== null) previousRank = rank;
+    return `
+    <tr class="${rank === 1 ? 'top-store-row' : ''}">
+      <td>${rank === null ? '—' : `<span class="rank-badge ${rank === 1 ? 'rank-first' : ''}">${rank}위</span>`}</td>
+      <td>${escapeHtml(teamDisplayName(r.team))}</td>
       <td>${escapeHtml(r.store)}</td>
       <td>${escapeHtml(r.manager || '-')}</td>
-      <td>${fmt(r.views)}</td>
-      <td>${fmt(r.conn)}</td>
-      <td>${fmt(r.miss)}</td>
-      <td>${fmt(r.res_in)}</td>
-      <td>${fmt(r.res_req)}</td>
-      <td>${fmt(r.review)}</td>
-      <td>${fmt(r.neg_review)}</td>
-      <td>${fmt(r.chat)}</td>
+      ${metrics.map(key => `<td>${fmtMetric(r[key])}</td>`).join('')}
     </tr>
-  `).join('');
+  `;
+  }).join('');
 
-  tbody.innerHTML = html + `
+  tbody.innerHTML = (html || `<tr><td colspan="${4 + metrics.length}">해당 조건에 수집된 데이터가 없습니다.</td></tr>`) + (tableRows.length ? `
     <tr class="total-row">
+      <td>—</td>
       <td>합계</td>
       <td>-</td>
-      <td>${fmt(total.views)}</td>
-      <td>${fmt(total.conn)}</td>
-      <td>${fmt(total.miss)}</td>
-      <td>${fmt(total.res_in)}</td>
-      <td>${fmt(total.res_req)}</td>
-      <td>${fmt(total.review)}</td>
-      <td>${fmt(total.neg_review)}</td>
-      <td>${fmt(total.chat)}</td>
+      <td>-</td>
+      ${metrics.map(key => `<td>${fmtMetric(total[key])}</td>`).join('')}
     </tr>
+  ` : '');
+}
+
+function renderRawItemsTable(rows) {
+  const head = $('raw-items-head');
+  const body = $('raw-items-body');
+  const count = $('raw-items-count');
+  if (!head || !body) return;
+
+  const headers = RAW_HEADERS.filter(header => rows.some(row => hasValue(row.source?.[header])));
+  if (count) count.textContent = `선택 조건 ${rows.length}건 · 값이 있는 ${headers.length}개 열`;
+  head.innerHTML = headers.map(header => `<th>${escapeHtml(header)}</th>`).join('');
+  body.innerHTML = rows.length && headers.length
+    ? rows.map(row => `<tr>${headers.map(header => `<td>${escapeHtml(row.source?.[header] ?? '')}</td>`).join('')}</tr>`).join('')
+    : '<tr><td>선택 조건에 수집된 원본 항목이 없습니다.</td></tr>';
+}
+
+function rankedSourceValues(row, prefix) {
+  const source = row.source || {};
+  return [1, 2, 3, 4, 5].map(index =>
+    text(pickRaw(source, [`${prefix} ${pad2(index)}`, `${prefix} ${index}`, `${prefix}${index}`]))
+  ).filter(value => value && !/^(?:없음|\(검색어 없음\)|-|—|N\/A)$/i.test(value));
+}
+
+function summarizeSourceTerms(rows, prefix) {
+  const terms = new Map();
+  let eligibleRows = 0;
+  let totalEntries = 0;
+  rows.forEach(row => {
+    const values = rankedSourceValues(row, prefix);
+    if (!values.length) return;
+    eligibleRows += 1;
+    const seen = new Set();
+    values.forEach((value, index) => {
+      if (seen.has(value)) return;
+      seen.add(value);
+      totalEntries += 1;
+      const previous = terms.get(value) || { name: value, count: 0, rankSum: 0 };
+      previous.count += 1;
+      previous.rankSum += index + 1;
+      terms.set(value, previous);
+    });
+  });
+  const top = [...terms.values()].sort((a, b) =>
+    b.count - a.count || a.rankSum / a.count - b.rankSum / b.count || a.name.localeCompare(b.name, 'ko')
+  ).slice(0, 5);
+  return { top, eligibleRows, totalEntries };
+}
+
+function renderSourceRankCard(rows, prefix, title, icon) {
+  const { top, eligibleRows, totalEntries } = summarizeSourceTerms(rows, prefix);
+  const list = top.length ? `
+    <p class="source-card-meta">선택 기간 · ${eligibleRows}개 매장·월 기록</p>
+    <ol class="source-stat-list">${top.map((term, index) => {
+      const share = term.count / totalEntries * 100;
+      return `<li class="source-stat-item ${index === 0 ? 'is-leading' : ''}" style="--share:${share.toFixed(2)}%">
+        <span class="source-stat-position">${index + 1}</span>
+        <strong class="source-stat-term" title="${escapeHtml(term.name)}">${escapeHtml(term.name)}</strong>
+        <b class="source-stat-share">${share.toFixed(2)}%</b>
+      </li>`;
+    }).join('')}</ol>`
+    : '<p class="no-source-data">선택 기간에 기록된 항목이 없습니다.</p>';
+
+  return `
+    <div class="kpi-head">
+      <div class="kpi-head-left">
+        <div class="kpi-icon">${icon}</div>
+        <div><h3 class="kpi-title">${title}</h3><div class="kpi-group">상위 5개 항목</div></div>
+      </div>
+      <div class="kpi-chip">TOP 5</div>
+    </div>
+    ${list}
+    <p class="source-card-note">표시된 비율은 시트의 상위 5개 기록 칸에서 차지한 비중입니다. 실제 검색·유입량 비율은 아닙니다.</p>
   `;
 }
 
-function renderInsight(mode, cur, prevMo) {
+function percentFromSource(value) {
+  if (!hasValue(value)) return null;
+  const raw = String(value).trim();
+  const parsed = Number(raw.replace(/[%\s,]/g, ''));
+  if (!Number.isFinite(parsed)) return null;
+  const result = raw.includes('%') ? parsed : parsed <= 1 ? parsed * 100 : parsed;
+  return result >= 0 && result <= 100 ? result : null;
+}
+
+function summarizeDemographics(rows) {
+  const genders = [];
+  const ages = new Map();
+  rows.forEach(row => {
+    const source = row.source || {};
+    // 고정 매핑: 성별 01 = 남자, 성별 02 = 여자.
+    const male = percentFromSource(pickRaw(source, [GENDER_SOURCE_HEADERS.male]));
+    const female = percentFromSource(pickRaw(source, [GENDER_SOURCE_HEADERS.female]));
+    if (male !== null && female !== null && male + female > 0) {
+      genders.push({ male: male / (male + female) * 100, female: female / (male + female) * 100 });
+    }
+    Object.entries(source).forEach(([header, value]) => {
+      if (!/연령/.test(header)) return;
+      const match = header.match(/(10|20|30|40|50|60|70|80|90)\s*대/);
+      const share = percentFromSource(value);
+      if (!match || share === null) return;
+      const label = `${match[1]}대`;
+      const entry = ages.get(label) || { sum: 0, count: 0 };
+      entry.sum += share;
+      entry.count += 1;
+      ages.set(label, entry);
+    });
+  });
+  return {
+    male: genders.length ? genders.reduce((sum, row) => sum + row.male, 0) / genders.length : null,
+    female: genders.length ? genders.reduce((sum, row) => sum + row.female, 0) / genders.length : null,
+    genderRows: genders.length,
+    ages: [...ages].sort((a, b) => Number(a[0].slice(0, -1)) - Number(b[0].slice(0, -1)))
+  };
+}
+
+function renderDemographics(rows) {
+  const target = $('demographic-summary');
+  if (!target) return;
+  const data = summarizeDemographics(rows);
+  const lead = data.male === null ? null : Math.abs(data.male - data.female);
+  const leadingGender = data.male >= data.female ? '남자' : '여자';
+  const trailingGender = data.male >= data.female ? '여자' : '남자';
+  const insight = lead === null ? '' : lead < 0.05
+    ? '남자와 여자 비율이 비슷합니다.'
+    : `${leadingGender} 비율이 ${trailingGender}보다 <strong>${lead.toFixed(1)}%p</strong> 높습니다.`;
+  const genderHtml = data.male === null
+    ? '<p class="no-source-data">선택 기간에 성별 비율이 없습니다.</p>'
+    : `<div class="gender-summary">
+        <div class="gender-donut" style="--male-share:${data.male.toFixed(1)}%" role="img" aria-label="남자 ${data.male.toFixed(1)}%, 여자 ${data.female.toFixed(1)}%"><span>성별</span></div>
+        <div class="gender-legend">
+          <div><span class="gender-dot male"></span><span>남자</span><strong>${data.male.toFixed(1)}%</strong></div>
+          <div><span class="gender-dot female"></span><span>여자</span><strong>${data.female.toFixed(1)}%</strong></div>
+        </div>
+      </div><p class="gender-insight">${insight}</p>`;
+  target.innerHTML = genderHtml;
+}
+
+function renderAudience(rows) {
+  const route = $('source-route-card');
+  const keyword = $('source-keyword-card');
+  if (route) route.innerHTML = renderSourceRankCard(rows, '유입경로', '유입경로', '↗');
+  if (keyword) keyword.innerHTML = renderSourceRankCard(rows, '유입키워드', '유입키워드', '⌕');
+  renderDemographics(rows);
+}
+
+function renderInsight(mode, cur, prevMo, prevYr, monthCount = 1) {
   const target = $('weekly-insight');
   if (!target) return;
+  const recentLabel = monthCount === 1 ? '전월' : '직전 같은 길이의 기간';
 
-  if (!prevMo || !hasAnyData(prevMo)) {
-    target.textContent = `비교 가능한 전월 데이터가 없어 ${mode === 'MONTH' ? '선택 월' : '이번 주'} 성과만 표시하고 있습니다.`;
+  if (!hasAnyData(cur)) {
+    target.textContent = '선택한 조회 조건에 수집된 지표 데이터가 없습니다.';
     return;
   }
 
-  const prefix = mode === 'MONTH' ? '선택 월 기준으로' : '이번 주 기준으로';
-  const messages = [];
-  const viewsRate = deltaRate(cur.views, prevMo.views, true);
-  const callRate = deltaRate(cur.conn, prevMo.conn, true);
-  const reserveRate = deltaRate(cur.res_req, prevMo.res_req, true);
-  const missRate = deltaRate(cur.miss, prevMo.miss, false);
-  const negRate = deltaRate(cur.neg_review, prevMo.neg_review, false);
+  const comparison = prevMo && hasAnyData(prevMo) ? prevMo : prevYr && hasAnyData(prevYr) ? prevYr : null;
+  const comparisonLabel = comparison === prevMo ? recentLabel : '전년 같은 기간';
+  if (!comparison) {
+    target.textContent = `비교 가능한 전년·전월 데이터가 없어 ${mode === 'MONTH' ? '선택 기간' : '이번 주'} 성과를 표시하고 있습니다.`;
+    return;
+  }
 
-  if (viewsRate) messages.push(`플레이스 조회수는 전월 대비 ${viewsRate.value >= 0 ? '상승' : '하락'}했습니다.`);
+  const prefix = mode === 'MONTH' ? '선택 기간 기준으로' : '이번 주 기준으로';
+  const messages = [];
+  const viewsRate = deltaRate(cur.views, comparison.views, true);
+  const callRate = deltaRate(cur.conn, comparison.conn, true);
+  const reserveRate = deltaRate(cur.res_req, comparison.res_req, true);
+  const missRate = deltaRate(cur.miss, comparison.miss, false);
+
+  if (viewsRate) messages.push(`조회수는 ${comparisonLabel} 대비 ${viewsRate.value >= 0 ? '상승' : '하락'}했습니다.`);
   if (callRate) messages.push(`연결콜은 ${callRate.value >= 0 ? '증가' : '감소'} 흐름입니다.`);
   if (reserveRate) messages.push(`예약 신청은 ${reserveRate.value >= 0 ? '개선' : '감소'}되었습니다.`);
   if (missRate && missRate.good) messages.push('미연결콜은 줄어 응대 관리 측면에서 긍정적입니다.');
-  if (negRate && negRate.good) messages.push('부정리뷰도 줄어 평판 관리 흐름이 좋아졌습니다.');
 
   target.textContent = `${prefix} ${messages.join(' ') || '핵심 지표를 확인해보세요.'}`;
 }
 
 function getCurrentPeriodState() {
   const mode = getReportMode();
+  const team = $('sel-team')?.value || 'ALL';
   const store = $('sel-store')?.value || 'ALL';
   const manager = $('sel-manager')?.value || 'ALL';
-
-  if (mode === 'MONTH') {
-    const currentKey = $('sel-month')?.value || monthKeys[monthKeys.length - 1];
-    const meta = getMonthMeta(currentKey);
-    const pmKey = prevMonthKeyForMonth(currentKey);
-    const pyKey = prevYearKeyForMonth(currentKey);
-
-    return {
-      mode,
-      currentKey,
-      store,
-      manager,
-      meta,
-      prevMonthKey: pmKey,
-      prevYearKey: pyKey,
-      prevMoMeta: pmKey ? getMonthMeta(pmKey) : null,
-      prevYrMeta: pyKey ? getMonthMeta(pyKey) : null
-    };
-  }
-
-  const currentKey = $('sel-week')?.value || weekKeys[weekKeys.length - 1];
-  const meta = weekMeta[currentKey];
-  const pmKey = meta ? prevMonthKeyForWeek(meta.yr, meta.mo, meta.wk) : null;
-  const pyKey = meta ? prevYearKeyForWeek(meta.yr, meta.mo, meta.wk) : null;
+  let startKey = $('sel-month-start')?.value || monthKeys[monthKeys.length - 1];
+  const endKey = $('sel-month-end')?.value || monthKeys[monthKeys.length - 1];
+  if (!startKey || !endKey) return { mode, meta: null };
+  if (monthOrdinal(startKey) > monthOrdinal(endKey)) startKey = endKey;
+  const length = monthOrdinal(endKey) - monthOrdinal(startKey) + 1;
+  const prevMonthStartKey = shiftMonthKey(startKey, -length);
+  const prevMonthEndKey = shiftMonthKey(endKey, -length);
+  const prevYearStartKey = shiftMonthKey(startKey, -12);
+  const prevYearEndKey = shiftMonthKey(endKey, -12);
 
   return {
     mode,
-    currentKey,
+    currentKey: endKey,
+    startKey,
+    endKey,
+    team,
     store,
     manager,
-    meta,
-    prevMonthKey: pmKey,
-    prevYearKey: pyKey,
-    prevMoMeta: pmKey ? weekMeta[pmKey] : null,
-    prevYrMeta: pyKey ? weekMeta[pyKey] : null
+    meta: getMonthRangeMeta(startKey, endKey),
+    prevMonthStartKey,
+    prevMonthEndKey,
+    prevYearStartKey,
+    prevYearEndKey,
+    prevMoMeta: getMonthRangeMeta(prevMonthStartKey, prevMonthEndKey),
+    prevYrMeta: getMonthRangeMeta(prevYearStartKey, prevYearEndKey)
   };
 }
 
@@ -1097,25 +1402,33 @@ function renderDashboard() {
   const state = getCurrentPeriodState();
   if (!state.meta) return;
 
-  const curRows = getRowsByPeriod(state.mode, state.currentKey, state.store, state.manager);
+  const curRows = getRowsByMonthRange(state.startKey, state.endKey, state.store, state.manager, state.team);
   const curSum = sumRows(curRows);
-  const prevMoSum = state.prevMonthKey ? sumRows(getRowsByPeriod(state.mode, state.prevMonthKey, state.store, state.manager)) : null;
-  const prevYrSum = state.prevYearKey ? sumRows(getRowsByPeriod(state.mode, state.prevYearKey, state.store, state.manager)) : null;
-  const trendKeys = getTrendKeys(state.mode, state.currentKey);
+  const prevMoRows = getRowsByMonthRange(state.prevMonthStartKey, state.prevMonthEndKey, state.store, state.manager, state.team);
+  const prevYrRows = getRowsByMonthRange(state.prevYearStartKey, state.prevYearEndKey, state.store, state.manager, state.team);
+  const prevMoSum = prevMoRows.length ? sumRows(prevMoRows) : null;
+  const prevYrSum = prevYrRows.length ? sumRows(prevYrRows) : null;
+  const trendKeys = getTrendKeys(state.mode, state.currentKey, state.startKey);
+  fillMetricSelects(REPORT_METRICS);
 
   lastRenderData = {
     mode: state.mode,
     meta: state.meta,
+    prevMoMeta: state.prevMoMeta,
+    prevYrMeta: state.prevYrMeta,
     curSum,
     prevMoSum,
     prevYrSum
   };
 
+  renderManagerSummary(state);
   renderPeriodCards(state.mode, state.meta, state.prevMoMeta, state.prevYrMeta);
-  renderKpiCards(curSum, prevMoSum, prevYrSum);
-  renderCharts(state.mode, curSum, prevMoSum, prevYrSum, trendKeys, state.store, state.manager);
-  renderDetailTable(curRows, state.mode);
-  renderInsight(state.mode, curSum, prevMoSum);
+  renderKpiCards(curSum, prevMoSum, prevYrSum, REPORT_METRICS, curRows, state.meta.monthCount);
+  renderCharts(state.mode, curSum, prevMoSum, prevYrSum, trendKeys, state.store, state.manager, state.team, REPORT_METRICS, state.meta.monthCount);
+  renderAudience(curRows);
+  renderDetailTable(curRows, state.mode, REPORT_METRICS);
+  renderRawItemsTable(curRows);
+  renderInsight(state.mode, curSum, prevMoSum, prevYrSum, state.meta.monthCount);
 }
 
 function openKpiModal(metricKey) {
@@ -1134,9 +1447,10 @@ function openKpiModal(metricKey) {
 
   if ($('modalGroup')) $('modalGroup').textContent = def.group;
   if ($('modalTitle')) $('modalTitle').textContent = def.label;
-  if ($('modalValue')) $('modalValue').textContent = fmt(cur[metricKey]);
-  if ($('modalPrevMonth')) $('modalPrevMonth').textContent = prevMo ? fmt(prevMo[metricKey]) : '-';
-  if ($('modalPrevYear')) $('modalPrevYear').textContent = prevYr ? fmt(prevYr[metricKey]) : '-';
+  if ($('modalCurrentLabel')) $('modalCurrentLabel').textContent = currentPeriodLabel(lastRenderData.meta?.monthCount);
+  if ($('modalValue')) $('modalValue').textContent = fmtMetric(cur[metricKey]);
+  if ($('modalPrevMonth')) $('modalPrevMonth').textContent = prevMo ? fmtMetric(prevMo[metricKey]) : '-';
+  if ($('modalPrevYear')) $('modalPrevYear').textContent = prevYr ? fmtMetric(prevYr[metricKey]) : '-';
   if ($('modalDesc')) $('modalDesc').textContent = def.desc;
 
   if ($('modalPrevMonthRate')) {
@@ -1172,7 +1486,7 @@ function ensureInsightModal() {
   modal.innerHTML = `
     <div class="insight-modal-card" role="dialog" aria-modal="true" aria-labelledby="insightModalTitle">
       <button type="button" class="insight-modal-close" id="insightModalClose" aria-label="닫기">×</button>
-      <p class="modal-eyebrow">선택 월 상세 분석</p>
+      <p class="modal-eyebrow">선택 기간 상세 분석</p>
       <h2 id="insightModalTitle">월간 성과 상세 요약</h2>
       <div class="insight-detail-box" id="insightDetailContent"></div>
     </div>
@@ -1258,6 +1572,9 @@ function ensureInsightModal() {
 }
 
 function insightRateText(current, previous, higher) {
+  if (current === null || current === undefined || previous === null || previous === undefined) {
+    return { text: '비교 데이터 없음', cls: 'flat' };
+  }
   const prev = num(previous);
   if (!prev) return { text: '비교 데이터 없음', cls: 'flat' };
 
@@ -1284,24 +1601,26 @@ function buildInsightDetailHtml() {
   const cur = lastRenderData.curSum || {};
   const prevMo = lastRenderData.prevMoSum || {};
   const prevYr = lastRenderData.prevYrSum || {};
-  const modeText = lastRenderData.mode === 'MONTH' ? '선택 월' : '이번 주';
+  const modeText = lastRenderData.mode === 'MONTH' ? '선택 기간' : '이번 주';
+  const comparisonLabel = lastRenderData.meta?.monthCount === 1 ? '전월' : '직전 기간';
 
-  return METRICS.map(key => {
+  const visible = ACTIVE_METRICS.filter(key => cur[key] !== null);
+  if (!visible.length) return '<div class="insight-detail-card"><strong>데이터 없음</strong><p>선택한 조건에 수집된 지표가 없습니다.</p></div>';
+
+  return visible.map(key => {
     const def = METRIC_DEFS[key];
-    const current = num(cur[key]);
-    const pm = num(prevMo[key]);
-    const py = num(prevYr[key]);
+    const current = cur[key];
+    const pm = prevMo[key];
+    const py = prevYr[key];
     const monthRate = insightRateText(current, pm, def.higher);
     const yearRate = insightRateText(current, py, def.higher);
 
     return `
       <div class="insight-detail-card">
-        <strong>${def.label} ${fmt(current)}</strong>
+        <strong>${def.label}: 전년 ${lastRenderData.prevYrSum ? fmtMetric(py) : '—'} → 전월 ${lastRenderData.prevMoSum ? fmtMetric(pm) : '—'} → ${modeText} ${fmtMetric(current)}</strong>
         <p>
-          ${modeText} ${def.label}은 전월 ${lastRenderData.prevMoSum ? fmt(pm) : '-'} 대비
-          <span class="${monthRate.cls}">${monthRate.text}</span>,
-          전년 같은 달 ${lastRenderData.prevYrSum ? fmt(py) : '-'} 대비
-          <span class="${yearRate.cls}">${yearRate.text}</span>입니다.
+          전년 같은 기간 대비 <span class="${yearRate.cls}">${yearRate.text}</span>,
+          ${comparisonLabel} 대비 <span class="${monthRate.cls}">${monthRate.text}</span>입니다.
           ${def.desc}
         </p>
       </div>
@@ -1351,20 +1670,7 @@ window.openKpiModal = openKpiModal;
 window.closeKpiModal = closeKpiModal;
 
 function rawRowsForExport() {
-  return RAW.map(r => ({
-    년: r.yr,
-    월: r.mo,
-    매장명: r.store,
-    담당자: r.manager,
-    조회수: r.views,
-    연결콜: r.conn,
-    미연결콜: r.miss,
-    예약유입: r.res_in,
-    예약신청: r.res_req,
-    리뷰: r.review,
-    부정리뷰: r.neg_review,
-    톡톡상담: r.chat
-  }));
+  return RAW.map(row => Object.fromEntries(RAW_HEADERS.map(header => [header, row.source?.[header] ?? ''])));
 }
 
 function downloadCsvFallback(rows, filename) {
@@ -1413,6 +1719,8 @@ function downloadRawExcel() {
 async function refreshData() {
   const btn = $('refreshBtn');
   const originalText = btn ? btn.textContent : '';
+  const previous = Object.fromEntries(['sel-team', 'sel-store', 'sel-manager', 'sel-month-start', 'sel-month-end']
+    .map(id => [id, $(id)?.value]));
 
   try {
     if (btn) {
@@ -1422,11 +1730,28 @@ async function refreshData() {
 
     await loadData(true);
     initSelects();
+    if (TEAMS.includes(previous['sel-team'])) $('sel-team').value = previous['sel-team'];
+    updateDependentFilterOptions();
+    if (STORES.includes(previous['sel-store']) &&
+      [...$('sel-store').options].some(option => option.value === previous['sel-store'])) {
+      $('sel-store').value = previous['sel-store'];
+    }
+    updateManagerOptions();
+    if (MANAGERS.includes(previous['sel-manager']) &&
+      [...$('sel-manager').options].some(option => option.value === previous['sel-manager'])) {
+      $('sel-manager').value = previous['sel-manager'];
+    }
+    if (monthKeys.includes(previous['sel-month-start'])) $('sel-month-start').value = previous['sel-month-start'];
+    if (monthKeys.includes(previous['sel-month-end'])) $('sel-month-end').value = previous['sel-month-end'];
     renderDashboard();
     if ($('empty-state')) $('empty-state').hidden = true;
   } catch (e) {
     console.error(e);
-    if ($('empty-state')) $('empty-state').hidden = false;
+    if ($('header-period')) $('header-period').textContent = '데이터 연결 오류';
+    if ($('empty-state')) {
+      $('empty-state').textContent = `데이터를 불러오지 못했습니다: ${e?.message || e}`;
+      $('empty-state').hidden = false;
+    }
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -1459,6 +1784,7 @@ function bindModalEvents() {
 async function init() {
   bindModalEvents();
   bindInsightEvents();
+  bindConversionLegend();
   fillMetricSelects();
 
   const refreshBtn = $('refreshBtn');
@@ -1479,7 +1805,11 @@ async function init() {
     if ($('empty-state')) $('empty-state').hidden = true;
   } catch (e) {
     console.error(e);
-    if ($('empty-state')) $('empty-state').hidden = false;
+    if ($('header-period')) $('header-period').textContent = '데이터 연결 오류';
+    if ($('empty-state')) {
+      $('empty-state').textContent = `데이터를 불러오지 못했습니다: ${e?.message || e}`;
+      $('empty-state').hidden = false;
+    }
   }
 }
 
@@ -1592,4 +1922,12 @@ window.logoutHankookReport = function () {
   window.location.reload();
 };
 
-document.addEventListener('DOMContentLoaded', initPinGate);
+document.addEventListener('DOMContentLoaded', () => {
+  // 정적 GitHub 페이지에는 시트 접근 권한이 없으므로 서버가 있는 보고서로 이동합니다.
+  // ?preview=1은 디자인 확인용이며 실제 시트 데이터는 표시하지 않습니다.
+  if (!window.google?.script?.run && !new URLSearchParams(window.location.search).has('preview')) {
+    window.location.replace(REPORT_WEB_APP_URL);
+    return;
+  }
+  initPinGate();
+});

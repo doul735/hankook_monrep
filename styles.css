@@ -423,6 +423,43 @@ select:focus {
 .chart-box.tall { height: 320px; }
 .chart-box.donut { height: 250px; }
 
+.conversion-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 0 auto;
+  color: #d6e4f3;
+  font-size: 13px;
+  font-weight: 800;
+}
+.conversion-legend button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid rgba(148, 163, 184, .24);
+  border-radius: 9px;
+  background: rgba(2, 6, 23, .22);
+  color: #d6e4f3;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.conversion-legend button:hover,
+.conversion-legend button:focus-visible {
+  border-color: rgba(148, 163, 184, .55);
+  outline: none;
+}
+.conversion-legend button.is-off { opacity: .46; }
+.conversion-legend button[hidden] { display: none; }
+.conversion-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
+.conversion-swatch.call { background: #38a7ff; }
+.conversion-swatch.reservation { background: #ff7a00; }
+
 .donut-layout {
   display: grid;
   grid-template-columns: minmax(170px, .9fr) minmax(190px, 1fr);
@@ -695,6 +732,7 @@ tr.total-row td {
   .modal-stats { grid-template-columns: 1fr; }
   .panel-header { align-items: flex-start; flex-direction: column; }
   .panel-header select { width: 100%; }
+  .conversion-legend { align-self: flex-end; margin-left: 0; }
   .donut-layout { grid-template-columns: 1fr; }
   .kpi-card { min-height: auto; }
   .modal-value { font-size: 46px; }
@@ -874,7 +912,7 @@ body.pin-locked {
 
 /* 월간 보고서: 기존 카드 디자인을 유지하며 필터와 로고를 조정 */
 #reportApp .filter-panel {
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
 }
 
 .pin-logo {
@@ -888,6 +926,35 @@ body.pin-locked {
 @media (max-width: 720px) {
   #reportApp .filter-panel { grid-template-columns: 1fr; }
 }
+
+#reportApp .kpi-coverage {
+  color: #aebed0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+#reportApp .raw-items-panel {
+  margin-top: 18px;
+  padding: 18px 22px;
+}
+
+#reportApp .raw-items-panel summary {
+  cursor: pointer;
+  color: #f8fafc;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+#reportApp .raw-items-panel summary span {
+  margin-left: 8px;
+  color: #aebed0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#reportApp .raw-items-panel .panel-subtitle { margin: 12px 0; }
+#reportApp .raw-items-panel th,
+#reportApp .raw-items-panel td { white-space: nowrap; }
 
 .pin-eyebrow {
   margin: 0 0 10px;
@@ -1221,19 +1288,21 @@ body.pin-locked,
   background: none !important;
 }
 
-/* PIN 화면은 두 줄, 내부 보고서 헤더는 한 줄 */
+/* PIN 제목은 두 줄 모두 카드 중앙, 보고서 제목은 한 줄 */
 .report-title {
   display: flex;
   margin: 0;
   font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   line-height: 1.2;
-  text-shadow: none;
 }
 
-.pin-card .report-title--pin {
+.pin-card .report-title {
+  width: 100%;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 5px;
+  text-align: center;
   white-space: normal;
 }
 
@@ -1242,6 +1311,7 @@ body.pin-locked,
   align-items: baseline;
   gap: 10px;
   white-space: nowrap;
+  font-weight: 400;
 }
 
 .report-title-team {
@@ -1261,4 +1331,340 @@ body.pin-locked,
 @media (max-width: 480px) {
   .report-title-team { font-size: 18px; }
   .report-title-en { font-size: 12px; }
+}
+
+/* 기간 범위, 담당 매장 요약, 전년 → 전월 → 당월 비교 */
+#reportApp .filter-panel {
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+}
+
+#reportApp .manager-summary {
+  margin-bottom: 18px;
+  padding: 17px 20px;
+  border: 1px solid rgba(56, 167, 255, .28);
+  border-radius: 18px;
+  background: #101e2b;
+}
+
+#reportApp .manager-summary[hidden] { display: none !important; }
+
+.manager-summary-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.manager-summary-heading span {
+  color: #9fb0c2;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.manager-summary-heading strong {
+  color: #fff;
+  font-size: 18px;
+}
+
+.manager-summary p {
+  margin: 9px 0 5px;
+  color: #dbeafe;
+  line-height: 1.5;
+  font-weight: 750;
+}
+
+.manager-summary small { color: #9fb0c2; }
+
+#reportApp .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+#reportApp .kpi-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 238px;
+  padding: 22px;
+  background:
+    radial-gradient(circle at 8% 4%, rgba(255, 122, 0, .06), transparent 35%),
+    linear-gradient(145deg, rgba(18, 34, 48, .98), rgba(10, 18, 27, .98));
+}
+
+#reportApp .kpi-card .kpi-head { margin-bottom: 18px; }
+#reportApp .kpi-card .kpi-icon { width: 46px; height: 46px; font-size: 20px; }
+#reportApp .kpi-card .kpi-title { font-size: 21px; }
+#reportApp .kpi-card .kpi-coverage { margin: 0 0 3px; line-height: 1.3; }
+#reportApp .kpi-card .kpi-period-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 8px;
+  margin-top: auto;
+}
+#reportApp .kpi-card .kpi-period-column { min-width: 0; }
+#reportApp .kpi-card .kpi-period-box {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 81px;
+  padding: 11px 12px;
+  border: 1px solid rgba(148, 163, 184, .18);
+  border-radius: 14px;
+  background: rgba(2, 6, 23, .32);
+}
+#reportApp .kpi-card .kpi-period-box.current {
+  border-color: rgba(255, 122, 0, .65);
+  background: rgba(255, 122, 0, .1);
+}
+#reportApp .kpi-card .kpi-period-box .rate-label { color: #acd4f2; }
+#reportApp .kpi-card .kpi-period-box strong {
+  display: block;
+  color: #fff;
+  font-size: clamp(16px, 1.8vw, 29px);
+  font-weight: 950;
+  line-height: 1.15;
+  letter-spacing: -.035em;
+  overflow-wrap: anywhere;
+}
+#reportApp .kpi-card .kpi-period-box.current strong { color: #ffad68; }
+#reportApp .kpi-card .kpi-period-change {
+  margin-top: 12px;
+  color: #acd4f2;
+  font-size: 11.5px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+#reportApp .kpi-card .kpi-period-change .rate-up,
+#reportApp .kpi-card .kpi-period-change .rate-down,
+#reportApp .kpi-card .kpi-period-change .rate-flat { white-space: nowrap; }
+
+.kpi-modal-card .modal-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.kpi-modal-card .modal-stats > div { min-width: 0; padding: 14px; }
+.kpi-modal-card .modal-stats > .modal-current { border-color: rgba(255, 122, 0, .55); }
+.kpi-modal-card #modalValue { color: #ffb067; overflow-wrap: anywhere; }
+
+@media (max-width: 1260px) {
+  #reportApp .filter-panel { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 1180px) {
+  #reportApp .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  #reportApp .filter-panel,
+  #reportApp .kpi-grid { grid-template-columns: 1fr; }
+  #reportApp .kpi-card { min-height: 238px; }
+  .kpi-modal-card .modal-stats { grid-template-columns: 1fr; }
+}
+
+/* 기간별 담당 매장, 유입 구성 및 지표별 매장 순위 */
+#reportApp .manager-store-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+
+.manager-store-chip {
+  padding: 7px 10px;
+  border: 1px solid rgba(56, 167, 255, .38);
+  border-radius: 999px;
+  background: rgba(56, 167, 255, .12);
+  color: #e0f2fe;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+#reportApp .audience-section {
+  margin: 0 0 20px;
+  padding: 24px;
+  border: 1px solid rgba(148, 163, 184, .2);
+  border-radius: 22px;
+  background: linear-gradient(145deg, #142636, #0b1722);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05), 0 16px 36px rgba(0, 0, 0, .18);
+}
+.audience-section-heading { margin: 0 0 18px; }
+.audience-section-heading h2 { margin: 0 0 5px; color: #fff; font-size: 21px; }
+.audience-section-heading p { margin: 0; color: #aebed0; font-size: 13px; }
+
+#reportApp .audience-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 16px;
+}
+
+#reportApp .audience-card {
+  min-width: 0;
+  padding: 21px;
+  border: 1px solid rgba(148, 163, 184, .2);
+  border-radius: 20px;
+  background: linear-gradient(145deg, rgba(18, 34, 48, .98), rgba(10, 18, 27, .98));
+  box-shadow: 0 16px 36px rgba(0, 0, 0, .18);
+}
+
+#reportApp .audience-card:last-child { display: flex; flex-direction: column; }
+#reportApp #demographic-summary {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 20px;
+}
+#reportApp #demographic-summary > .gender-summary { width: 100%; }
+
+.audience-card-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 15px; }
+.audience-icon {
+  display: grid;
+  flex: 0 0 37px;
+  width: 37px;
+  height: 37px;
+  place-items: center;
+  border-radius: 11px;
+  font-size: 20px;
+  font-weight: 800;
+}
+.gender-icon { color: #f472b6; background: rgba(244, 114, 182, .14); }
+.audience-card h3 { margin: 0; color: #fff; font-size: 17px; }
+.audience-card-heading p { margin: 4px 0 0; color: #aebed0; font-size: 12px; }
+.audience-meta { margin: 0 0 12px; color: #bcd0e7; font-size: 12px; font-weight: 700; }
+.no-source-data { color: #aebed0; font-size: 13px; line-height: 1.55; }
+
+.source-track { height: 6px; margin-top: 7px; border-radius: 99px; background: rgba(148, 163, 184, .18); overflow: hidden; }
+.source-track > span { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #ff7a00, #ffba65); }
+.audience-note { margin: 16px 0 0; color: #a8b8c8; font-size: 11px; line-height: 1.5; }
+
+.gender-summary { display: flex; align-items: center; gap: 18px; max-width: 540px; margin: 0 auto; }
+.gender-donut {
+  --gender-size: clamp(170px, 13vw, 200px);
+  display: grid;
+  flex: 0 0 var(--gender-size);
+  width: var(--gender-size);
+  height: var(--gender-size);
+  place-items: center;
+  border-radius: 50%;
+  background: conic-gradient(#438aff 0 var(--male-share), #fb6d93 var(--male-share) 100%);
+}
+.gender-donut::before { content: ''; grid-area: 1 / 1; width: 62%; height: 62%; border-radius: 50%; background: #101e2b; }
+.gender-donut > span { z-index: 1; grid-area: 1 / 1; color: #eaf2fa; font-size: 15px; font-weight: 900; }
+.gender-legend { flex: 1; display: grid; gap: 12px; min-width: 0; }
+.gender-legend > div { display: flex; align-items: center; gap: 7px; color: #d6e3ef; font-size: 12px; }
+.gender-legend strong { margin-left: auto; color: #fff; font-size: 17px; }
+.gender-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; }
+.gender-dot.male { background: #438aff; }
+.gender-dot.female { background: #fb6d93; }
+.gender-insight {
+  width: 100%;
+  max-width: 540px;
+  margin: 0 auto;
+  padding: 13px 15px;
+  border: 1px solid rgba(148, 163, 184, .17);
+  border-radius: 13px;
+  background: rgba(2, 6, 23, .24);
+  color: #cbd9e8;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+.gender-insight strong { color: #fff; font-size: 13px; }
+.age-section { margin-top: 18px; padding-top: 13px; border-top: 1px solid rgba(148, 163, 184, .18); }
+.age-section h4 { margin: 0 0 8px; color: #edf4fb; font-size: 13px; }
+.age-empty { margin: 0; color: #9fb0c2; font-size: 12px; line-height: 1.55; }
+.age-list { display: grid; gap: 8px; }
+.age-line { display: grid; grid-template-columns: 34px 1fr 44px; align-items: center; gap: 8px; color: #d6e3ef; font-size: 11px; }
+.age-line .source-track { margin-top: 0; }
+.age-line b { text-align: right; }
+
+#reportApp .ranking-control { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.ranking-control label { color: #bcd0e7; font-size: 12px; font-weight: 800; white-space: nowrap; }
+.ranking-control select { min-width: 140px; }
+#reportApp .ranked-table { min-width: 1260px; }
+#reportApp .top-store-row td { background: rgba(255, 122, 0, .10); }
+#reportApp .top-store-row td:nth-child(3),
+#reportApp .top-store-row td:nth-child(4) { color: #ffb567; font-weight: 950; }
+.rank-badge { display: inline-flex; min-width: 38px; justify-content: center; padding: 4px 8px; border-radius: 999px; color: #bcd0e7; background: rgba(148, 163, 184, .11); font-weight: 900; }
+.rank-badge.rank-first { color: #071018; background: #ff9a2f; }
+
+@media (max-width: 1240px) {
+  #reportApp .audience-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #reportApp .audience-card:last-child { grid-column: 1 / -1; }
+  #reportApp .gender-donut { --gender-size: 220px; }
+}
+
+@media (max-width: 720px) {
+  #reportApp .audience-section { padding: 16px; }
+  #reportApp .audience-grid { grid-template-columns: minmax(0, 1fr); }
+  #reportApp .audience-card:last-child { grid-column: auto; }
+  #reportApp .audience-card { padding: 16px; }
+  #reportApp .ranking-control { width: 100%; }
+  #reportApp .ranking-control select { flex: 1; }
+}
+
+/* 유입경로·유입키워드는 고객 구성 영역에서 성별 카드와 함께 표시합니다. */
+#reportApp .source-kpi-card { cursor: default; }
+#reportApp .source-kpi-card:hover {
+  transform: none;
+  border-color: rgba(148, 163, 184, .2);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 16px 36px rgba(0,0,0,.18);
+}
+.source-kpi-card .kpi-head { margin-bottom: 14px; }
+.source-card-meta { margin: 0 0 10px; color: #aebed0; font-size: 11px; font-weight: 750; }
+.source-stat-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.source-stat-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, .15);
+  background: rgba(2, 6, 23, .17);
+  overflow: hidden;
+}
+.source-stat-item::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--share);
+  background: rgba(148, 163, 184, .06);
+  content: '';
+}
+.source-stat-item.is-leading { background: rgba(36, 134, 99, .13); }
+.source-stat-item.is-leading::before { background: rgba(52, 211, 153, .14); }
+.source-stat-item > * { position: relative; z-index: 1; }
+.source-stat-position { color: #e2e8f0; font-size: 13px; font-weight: 900; text-align: center; }
+.source-stat-term { color: #eaf2fa; font-size: 12px; font-weight: 760; overflow-wrap: anywhere; }
+.source-stat-share { color: #f1f5f9; font-size: 12px; font-weight: 950; white-space: nowrap; }
+.source-stat-item.is-leading .source-stat-position,
+.source-stat-item.is-leading .source-stat-term,
+.source-stat-item.is-leading .source-stat-share { color: #4ee0a3; }
+.source-card-note { margin: 13px 0 0; color: #a8b8c8; font-size: 10px; line-height: 1.45; }
+
+@media (max-width: 720px) {
+  #reportApp .brand-text .report-title--header {
+    flex-wrap: wrap;
+    white-space: normal;
+    gap: 2px 8px;
+  }
+  #reportApp .brand-text,
+  #reportApp .header-actions { min-width: 0; }
+  #reportApp .source-stat-term { font-size: 12px; }
+}
+
+@media (max-width: 480px) {
+  #reportApp .gender-summary { flex-direction: column; gap: 16px; }
+  #reportApp .gender-donut { width: min(220px, 100%); height: auto; aspect-ratio: 1; flex: 0 0 auto; }
+  #reportApp .gender-legend { width: 100%; }
+}
+
+@media (max-width: 420px) {
+  #reportApp .kpi-card { padding: 20px; }
+  #reportApp .kpi-card .kpi-period-grid { gap: 6px; }
+  #reportApp .kpi-card .kpi-period-box { min-height: 73px; padding: 9px; }
+  #reportApp .kpi-card .kpi-period-box strong { font-size: clamp(16px, 5vw, 24px); }
+  #reportApp .kpi-card .kpi-period-change { font-size: 10.5px; }
 }
