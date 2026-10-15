@@ -17,7 +17,7 @@ let weekMeta = {};
 let weekKeys = [];
 let monthKeys = [];
 let STORES = [];
-let TEAMS = [];
+let MANAGERS = [];
 let charts = {};
 let lastRenderData = null;
 
@@ -358,7 +358,7 @@ function normalizePlaceRow(r) {
     start: dateText(pickRaw(r, ['시작일(월)', '시작일', 'start', 'start_date', 'startDate'])),
     end: dateText(pickRaw(r, ['종료일(일)', '종료일', 'end', 'end_date', 'endDate'])),
     store: text(pickRaw(r, ['매장명', '매장', 'store', 'store_name', 'storeName'])),
-    team: text(pickRaw(r, ['팀', 'team'])),
+    manager: text(pickRaw(r, ['담당자', '담당자명', '담당자 이름', '매장 담당자', '담당', 'manager', 'managerName', 'person_in_charge'])),
     views: num(pickRaw(r, ['조회수', '플레이스 조회수', 'views', 'place_views', 'placeViews'])),
     conn: num(pickRaw(r, ['연결콜', '연결 콜', 'conn', 'connected_call', 'connectedCall'])),
     miss: num(pickRaw(r, ['미연결콜', '미연결 콜', 'miss', 'missed_call', 'missedCall'])),
@@ -429,7 +429,7 @@ function rebuildMetaFromRaw() {
   });
 
   STORES = [...new Set(RAW.map(r => r.store).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
-  TEAMS = [...new Set(RAW.map(r => r.team).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+  MANAGERS = [...new Set(RAW.map(r => r.manager).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
 }
 
 function sumRows(rows) {
@@ -443,7 +443,7 @@ function hasAnyData(sum) {
   return METRICS.some(key => num(sum[key]) > 0);
 }
 
-function getRowsByWeekKey(weekKey, store = 'ALL', team = 'ALL') {
+function getRowsByWeekKey(weekKey, store = 'ALL', manager = 'ALL') {
   const meta = weekMeta[weekKey];
   if (!meta) return [];
 
@@ -452,11 +452,11 @@ function getRowsByWeekKey(weekKey, store = 'ALL', team = 'ALL') {
     r.mo === meta.mo &&
     r.wk === meta.wk &&
     (store === 'ALL' || r.store === store) &&
-    (team === 'ALL' || r.team === team)
+    (manager === 'ALL' || r.manager === manager)
   );
 }
 
-function getRowsByMonthKey(monthKey, store = 'ALL', team = 'ALL') {
+function getRowsByMonthKey(monthKey, store = 'ALL', manager = 'ALL') {
   const [yr, mo] = String(monthKey || '').split('-').map(Number);
   if (!yr || !mo) return [];
 
@@ -464,14 +464,14 @@ function getRowsByMonthKey(monthKey, store = 'ALL', team = 'ALL') {
     r.yr === yr &&
     r.mo === mo &&
     (store === 'ALL' || r.store === store) &&
-    (team === 'ALL' || r.team === team)
+    (manager === 'ALL' || r.manager === manager)
   );
 }
 
-function getRowsByPeriod(mode, key, store = 'ALL', team = 'ALL') {
+function getRowsByPeriod(mode, key, store = 'ALL', manager = 'ALL') {
   return mode === 'MONTH'
-    ? getRowsByMonthKey(key, store, team)
-    : getRowsByWeekKey(key, store, team);
+    ? getRowsByMonthKey(key, store, manager)
+    : getRowsByWeekKey(key, store, manager);
 }
 
 function getMonthMeta(monthKey) {
@@ -586,19 +586,19 @@ function updatePeriodModeUI() {
 
 function initSelects() {
   const selStore = $('sel-store');
-  const selTeam = $('sel-team');
+  const selManager = $('sel-manager');
   const selMonth = $('sel-month');
 
-  if (!selStore || !selTeam || !selMonth) return;
+  if (!selStore || !selManager || !selMonth) return;
 
   selStore.innerHTML = '<option value="ALL">전체 매장</option>';
   STORES.forEach(store => {
     selStore.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(store)}">${escapeHtml(store)}</option>`);
   });
 
-  selTeam.innerHTML = '<option value="ALL">전체 팀</option>';
-  TEAMS.forEach(team => {
-    selTeam.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(team)}">${escapeHtml(team)}</option>`);
+  selManager.innerHTML = '<option value="ALL">전체 담당자</option>';
+  MANAGERS.forEach(manager => {
+    selManager.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(manager)}">${escapeHtml(manager)}</option>`);
   });
 
   selMonth.innerHTML = '';
@@ -611,7 +611,7 @@ function initSelects() {
     || monthKeys[monthKeys.length - 1] || '';
 
   selStore.onchange = renderDashboard;
-  selTeam.onchange = renderDashboard;
+  selManager.onchange = renderDashboard;
 
   selMonth.onchange = renderDashboard;
 
@@ -844,14 +844,14 @@ function renderGroupSummary(cur) {
   }).join('');
 }
 
-function renderCharts(mode, cur, prevMo, prevYr, trendKeys, store, team) {
+function renderCharts(mode, cur, prevMo, prevYr, trendKeys, store, manager) {
   const trendMetric = $('trendMetricSelect')?.value || 'views';
   const compareMetric = $('compareMetricSelect')?.value || 'views';
 
   const labels = trendKeys.map(key => labelForPeriodKey(mode, key));
-  const trendValues = trendKeys.map(key => sumRows(getRowsByPeriod(mode, key, store, team))[trendMetric]);
-  const connValues = trendKeys.map(key => sumRows(getRowsByPeriod(mode, key, store, team)).conn);
-  const resReqValues = trendKeys.map(key => sumRows(getRowsByPeriod(mode, key, store, team)).res_req);
+  const trendValues = trendKeys.map(key => sumRows(getRowsByPeriod(mode, key, store, manager))[trendMetric]);
+  const connValues = trendKeys.map(key => sumRows(getRowsByPeriod(mode, key, store, manager)).conn);
+  const resReqValues = trendKeys.map(key => sumRows(getRowsByPeriod(mode, key, store, manager)).res_req);
 
   if ($('trendChartTitle')) $('trendChartTitle').textContent = mode === 'MONTH' ? '월별 지표 추이' : '주차별 지표 추이';
   if ($('conversionChartTitle')) $('conversionChartTitle').textContent = mode === 'MONTH' ? '월별 전환 지표 추이' : '주차별 전환 지표 추이';
@@ -949,15 +949,15 @@ function renderCharts(mode, cur, prevMo, prevYr, trendKeys, store, team) {
   renderGroupSummary(cur);
 }
 
-function aggregateRowsByStoreTeam(rows) {
+function aggregateRowsByStoreManager(rows) {
   const map = new Map();
 
   rows.forEach(row => {
-    const key = `${row.store}__${row.team || ''}`;
+    const key = `${row.store}__${row.manager || ''}`;
     if (!map.has(key)) {
       map.set(key, {
         store: row.store,
-        team: row.team || '',
+        manager: row.manager || '',
         views: 0,
         conn: 0,
         miss: 0,
@@ -977,7 +977,7 @@ function aggregateRowsByStoreTeam(rows) {
 
   return [...map.values()].sort((a, b) => {
     const storeCompare = a.store.localeCompare(b.store, 'ko');
-    return storeCompare || a.team.localeCompare(b.team, 'ko');
+    return storeCompare || a.manager.localeCompare(b.manager, 'ko');
   });
 }
 
@@ -985,7 +985,7 @@ function renderDetailTable(rows, mode) {
   const tbody = $('detail-tbody');
   if (!tbody) return;
 
-  const tableRows = aggregateRowsByStoreTeam(rows);
+  const tableRows = aggregateRowsByStoreManager(rows);
   const total = sumRows(tableRows);
 
   if ($('table-caption')) {
@@ -997,7 +997,7 @@ function renderDetailTable(rows, mode) {
   const html = tableRows.map(r => `
     <tr>
       <td>${escapeHtml(r.store)}</td>
-      <td>${escapeHtml(r.team || '-')}</td>
+      <td>${escapeHtml(r.manager || '-')}</td>
       <td>${fmt(r.views)}</td>
       <td>${fmt(r.conn)}</td>
       <td>${fmt(r.miss)}</td>
@@ -1054,7 +1054,7 @@ function renderInsight(mode, cur, prevMo) {
 function getCurrentPeriodState() {
   const mode = getReportMode();
   const store = $('sel-store')?.value || 'ALL';
-  const team = $('sel-team')?.value || 'ALL';
+  const manager = $('sel-manager')?.value || 'ALL';
 
   if (mode === 'MONTH') {
     const currentKey = $('sel-month')?.value || monthKeys[monthKeys.length - 1];
@@ -1066,7 +1066,7 @@ function getCurrentPeriodState() {
       mode,
       currentKey,
       store,
-      team,
+      manager,
       meta,
       prevMonthKey: pmKey,
       prevYearKey: pyKey,
@@ -1084,7 +1084,7 @@ function getCurrentPeriodState() {
     mode,
     currentKey,
     store,
-    team,
+    manager,
     meta,
     prevMonthKey: pmKey,
     prevYearKey: pyKey,
@@ -1097,10 +1097,10 @@ function renderDashboard() {
   const state = getCurrentPeriodState();
   if (!state.meta) return;
 
-  const curRows = getRowsByPeriod(state.mode, state.currentKey, state.store, state.team);
+  const curRows = getRowsByPeriod(state.mode, state.currentKey, state.store, state.manager);
   const curSum = sumRows(curRows);
-  const prevMoSum = state.prevMonthKey ? sumRows(getRowsByPeriod(state.mode, state.prevMonthKey, state.store, state.team)) : null;
-  const prevYrSum = state.prevYearKey ? sumRows(getRowsByPeriod(state.mode, state.prevYearKey, state.store, state.team)) : null;
+  const prevMoSum = state.prevMonthKey ? sumRows(getRowsByPeriod(state.mode, state.prevMonthKey, state.store, state.manager)) : null;
+  const prevYrSum = state.prevYearKey ? sumRows(getRowsByPeriod(state.mode, state.prevYearKey, state.store, state.manager)) : null;
   const trendKeys = getTrendKeys(state.mode, state.currentKey);
 
   lastRenderData = {
@@ -1113,7 +1113,7 @@ function renderDashboard() {
 
   renderPeriodCards(state.mode, state.meta, state.prevMoMeta, state.prevYrMeta);
   renderKpiCards(curSum, prevMoSum, prevYrSum);
-  renderCharts(state.mode, curSum, prevMoSum, prevYrSum, trendKeys, state.store, state.team);
+  renderCharts(state.mode, curSum, prevMoSum, prevYrSum, trendKeys, state.store, state.manager);
   renderDetailTable(curRows, state.mode);
   renderInsight(state.mode, curSum, prevMoSum);
 }
@@ -1355,7 +1355,7 @@ function rawRowsForExport() {
     년: r.yr,
     월: r.mo,
     매장명: r.store,
-    팀: r.team,
+    담당자: r.manager,
     조회수: r.views,
     연결콜: r.conn,
     미연결콜: r.miss,
