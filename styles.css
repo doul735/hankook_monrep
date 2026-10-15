@@ -858,7 +858,7 @@ body.pin-locked {
   align-items: center;
   justify-content: center;
 
-  border-radius: 50%;
+  border-radius: 18px;
   overflow: hidden;
   background: transparent;
   box-shadow: none;
@@ -869,19 +869,16 @@ body.pin-locked {
   height: 60px;
   display: block;
   object-fit: contain;
-  border-radius: 50%;
+  border-radius: 18px;
 }
 
-/* 월간 보고서: 기존 카드 디자인을 유지하며 필터와 문자 심벌만 조정 */
+/* 월간 보고서: 기존 카드 디자인을 유지하며 필터와 로고를 조정 */
 #reportApp .filter-panel {
   grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr) auto;
 }
 
 .pin-logo {
-  background: linear-gradient(135deg, var(--orange), var(--orange-2));
-  color: white;
-  font-size: 28px;
-  font-weight: 900;
+  background: transparent;
 }
 
 @media (max-width: 900px) {
