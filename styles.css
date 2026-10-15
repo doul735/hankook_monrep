@@ -1220,3 +1220,28 @@ body.pin-locked,
   display: none !important;
   background: none !important;
 }
+
+.report-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  white-space: nowrap;
+  font-family: Pretendard, sans-serif;
+  margin: 0;
+}
+
+.report-title-team {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.report-title-en {
+  font-size: 16px;
+  font-weight: 400;
+  color: #667085;
+}
+
+@media (max-width: 480px) {
+  .report-title-team { font-size: 18px; }
+  .report-title-en { font-size: 12px; }
+}
