@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>한국타이어 네이버 플레이스 월간보고서</title>
+  <meta
+    name="description"
+    content="한국타이어 네이버 플레이스 주요 성과 월간보고서"
+  />
+
+  <meta
+    property="og:title"
+    content="한국타이어 네이버 플레이스 월간보고서"
+  />
+  <meta
+    property="og:description"
+    content="조회수, 연결콜, 예약, 리뷰 성과를 한눈에 확인하는 월간 보고서"
+  />
+  <meta property="og:type" content="website" />
+
+  <link rel="stylesheet" href="./styles.css?v=20261015-month1" />
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="./app.js?v=20261015-month1" defer></script>
+</head>
+
+<body class="pin-locked">
+
+  <!-- 4자리 PIN 입력 화면 -->
+  <section class="pin-gate" id="pinGate">
+    <form class="pin-card" id="pinForm">
+
+      <div class="pin-logo" aria-hidden="true">H</div>
+
+      <p class="pin-eyebrow">도울기획 · 네이버 플레이스</p>
+
+      <h1>한국타이어 네이버 플레이스 월간보고서</h1>
+
+      <p class="pin-guide">
+        보고서를 확인하려면<br />
+        4자리 PIN 번호를 입력해주세요.
+      </p>
+
+      <input
+        type="password"
+        id="pinInput"
+        name="pin"
+        inputmode="numeric"
+        pattern="[0-9]*"
+        maxlength="4"
+        autocomplete="off"
+        placeholder="••••"
+        aria-label="4자리 PIN 번호"
+        autofocus
+      />
+
+      <p class="pin-error" id="pinError" role="alert" hidden>
+        PIN 번호가 올바르지 않습니다.
+      </p>
+
+      <button type="submit">보고서 확인</button>
+    </form>
+  </section>
+
+  <!-- 기존 보고서 화면 -->
+  <div class="page-shell" id="reportApp" hidden>
+
+    <header class="report-header">
+      <div class="brand-area">
+        <div class="brand-symbol" aria-hidden="true">H</div>
+
+        <div class="brand-text">
+          <h1>한국타이어 네이버 플레이스 월간보고서</h1>
+          <p>도울기획 · 주요 성과 요약 대시보드</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button
+          class="download-btn"
+          id="downloadRawBtn"
+          type="button"
+        >
+          Raw데이터 엑셀 내려받기
+        </button>
+
+        <div class="header-period" id="header-period">
+          데이터 불러오는 중...
+        </div>
+      </div>
+    </header>
+
+    <section class="filter-panel" aria-label="보고서 조회 조건">
+      <div class="filter-item">
+        <label for="sel-store">매장별 조회</label>
+        <select id="sel-store"></select>
+      </div>
+
+      <div class="filter-item">
+        <label for="sel-team">팀별 조회</label>
+        <select id="sel-team"></select>
+      </div>
+
+      <div class="filter-item month-filter is-active">
+        <label for="sel-month">월별 선택</label>
+        <select id="sel-month"></select>
+        <p class="filter-help">해당 월의 매장별 데이터를 합산</p>
+      </div>
+
+      <button
+        class="refresh-btn"
+        id="refreshBtn"
+        type="button"
+      >
+        최신 조회
+      </button>
+    </section>
+
+    <section class="period-grid">
+      <article class="period-card current">
+        <span class="dot"></span>
+
+        <div>
+          <strong id="period-current-title">선택 기준</strong>
+          <p id="period-current">-</p>
+        </div>
+      </article>
+
+      <article class="period-card prev-month">
+        <span class="dot"></span>
+
+        <div>
+          <strong id="period-prev-month-title">전월</strong>
+          <p id="period-prev-month">-</p>
+        </div>
+      </article>
+
+      <article class="period-card prev-year">
+        <span class="dot"></span>
+
+        <div>
+          <strong id="period-prev-year-title">전년 같은 달</strong>
+          <p id="period-prev-year">-</p>
+        </div>
+      </article>
+    </section>
+
+    <section
+      class="kpi-grid"
+      id="kpi-grid"
+      aria-label="주요 KPI 카드"
+    ></section>
+
+    <main class="dashboard-chart-grid">
+
+      <section class="panel chart-wide trend-card">
+        <div class="panel-header">
+          <div>
+            <h2 id="trendChartTitle">월별 지표 추이</h2>
+            <p class="panel-subtitle">
+              선택한 지표의 최근 흐름을 숫자와 함께 확인합니다.
+            </p>
+          </div>
+
+          <select
+            id="trendMetricSelect"
+            aria-label="추이 차트 지표 선택"
+          ></select>
+        </div>
+
+        <div class="chart-box tall">
+          <canvas id="chart-trend"></canvas>
+        </div>
+      </section>
+
+      <section class="panel chart-side group-card">
+        <div class="panel-header">
+          <div>
+            <h2>지표 그룹 구성</h2>
+            <p class="panel-subtitle">
+              노출 · 전환 · 관리 항목을 구분해서 보여줍니다.
+            </p>
+          </div>
+        </div>
+
+        <div class="donut-layout">
+          <div class="chart-box donut">
+            <canvas id="chart-groups"></canvas>
+          </div>
+
+          <div class="group-legend" id="group-summary">
+            <div>
+              <span class="legend-dot orange"></span>
+              <b>노출 관련 지표</b>
+              <p>조회수 · 예약유입</p>
+            </div>
+
+            <div>
+              <span class="legend-dot blue"></span>
+              <b>전환 관련 지표</b>
+              <p>연결콜 · 예약신청</p>
+            </div>
+
+            <div>
+              <span class="legend-dot green"></span>
+              <b>관리 관련 지표</b>
+              <p>미연결콜 · 리뷰 · 부정리뷰 · 톡톡상담</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel chart-wide conversion-card">
+        <div class="panel-header">
+          <div>
+            <h2 id="conversionChartTitle">전환 지표 추이</h2>
+            <p class="panel-subtitle">
+              예약신청만 따로 보지 않고 연결콜과 함께 비교합니다.
+            </p>
+          </div>
+        </div>
+
+        <div class="chart-box tall">
+          <canvas id="chart-reservation"></canvas>
+        </div>
+      </section>
+
+      <section class="panel chart-side compare-card">
+        <div class="panel-header">
+          <div>
+            <h2>전월 / 전년 같은 달 비교</h2>
+            <p class="panel-subtitle">
+              선택 지표의 현재 · 전월 · 전년 값을 비교합니다.
+            </p>
+          </div>
+
+          <select
+            id="compareMetricSelect"
+            aria-label="비교 차트 지표 선택"
+          ></select>
+        </div>
+
+        <div class="chart-box tall">
+          <canvas id="chart-compare"></canvas>
+        </div>
+      </section>
+
+    </main>
+
+    <section class="insight-panel">
+      <div class="insight-title">
+        <span>💡</span>
+        <strong>선택 월 인사이트</strong>
+      </div>
+
+      <p id="weekly-insight">
+        데이터를 불러오면 선택 월의 핵심 변화가 자동으로 표시됩니다.
+      </p>
+
+      <button
+        type="button"
+        onclick="document.querySelector('.dashboard-chart-grid')?.scrollIntoView({behavior:'smooth'})"
+      >
+        상세 분석 보기
+        <span>›</span>
+      </button>
+    </section>
+
+    <section class="table-panel">
+      <div class="panel-header">
+        <div>
+          <h2>매장별 상세 데이터</h2>
+
+          <p class="panel-subtitle" id="table-caption">
+            선택한 조회 기준에 맞춰 매장별 합산 데이터가 표시됩니다.
+          </p>
+        </div>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>매장명</th>
+              <th>팀</th>
+              <th>조회수</th>
+              <th>연결콜</th>
+              <th>미연결콜</th>
+              <th>예약유입</th>
+              <th>예약신청</th>
+              <th>리뷰</th>
+              <th>부정리뷰</th>
+              <th>톡톡상담</th>
+            </tr>
+          </thead>
+
+          <tbody id="detail-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="empty-state" id="empty-state" hidden>
+      데이터를 불러오지 못했습니다. Apps Script 웹앱 URL 또는 배포 권한을 확인해주세요.
+    </div>
+
+  </div>
+
+  <div class="kpi-modal" id="kpiModal" hidden>
+    <div
+      class="kpi-modal-card"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modalTitle"
+    >
+      <button
+        class="kpi-modal-close"
+        type="button"
+        id="modalCloseBtn"
+        aria-label="닫기"
+      >
+        ×
+      </button>
+
+      <p class="modal-eyebrow" id="modalGroup">지표 상세</p>
+      <h2 id="modalTitle">-</h2>
+      <div class="modal-value" id="modalValue">-</div>
+
+      <div class="modal-stats">
+        <div>
+          <span>전월</span>
+          <strong id="modalPrevMonth">-</strong>
+          <p id="modalPrevMonthRate">-</p>
+        </div>
+
+        <div>
+          <span>전년 같은 달</span>
+          <strong id="modalPrevYear">-</strong>
+          <p id="modalPrevYearRate">-</p>
+        </div>
+      </div>
+
+      <p class="modal-desc" id="modalDesc">-</p>
+    </div>
+  </div>
+
+</body>
+</html>
