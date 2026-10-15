@@ -20,11 +20,12 @@
   />
   <meta property="og:type" content="website" />
 
-  <link rel="stylesheet" href="./styles.css?v=20261015-month1" />
+  <link rel="icon" href="./pllet-logo.png?v=20261015-3" type="image/png" />
+  <link rel="stylesheet" href="./styles.css?v=20261015-month3" />
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="./app.js?v=20261015-month1" defer></script>
+  <script src="./app.js?v=20261015-month3" defer></script>
 </head>
 
 <body class="pin-locked">
@@ -33,7 +34,7 @@
   <section class="pin-gate" id="pinGate">
     <form class="pin-card" id="pinForm">
 
-      <div class="pin-logo" aria-hidden="true">H</div>
+      <div class="pin-logo" aria-hidden="true"><img src="./pllet-logo.png" alt="" /></div>
 
       <p class="pin-eyebrow">도울기획 · 네이버 플레이스</p>
 
@@ -70,7 +71,7 @@
 
     <header class="report-header">
       <div class="brand-area">
-        <div class="brand-symbol" aria-hidden="true">H</div>
+        <div class="brand-symbol image-logo" aria-hidden="true"><img src="./pllet-logo.png" alt="" /></div>
 
         <div class="brand-text">
           <h1>한국타이어 네이버 플레이스 월간보고서</h1>
@@ -100,8 +101,8 @@
       </div>
 
       <div class="filter-item">
-        <label for="sel-team">팀별 조회</label>
-        <select id="sel-team"></select>
+        <label for="sel-manager">담당자별 조회</label>
+        <select id="sel-manager"></select>
       </div>
 
       <div class="filter-item month-filter is-active">
@@ -285,7 +286,7 @@
           <thead>
             <tr>
               <th>매장명</th>
-              <th>팀</th>
+              <th>담당자</th>
               <th>조회수</th>
               <th>연결콜</th>
               <th>미연결콜</th>
