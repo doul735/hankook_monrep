@@ -437,9 +437,9 @@ async function fetchSheetCsv(sheet) {
   const csv = await response.text();
   if (/^\s*(?:<!DOCTYPE|<html)/i.test(csv)) throw new Error(`${sheet} 탭이 게시되지 않음`);
   if (!response.ok) throw new Error(`${sheet} CSV HTTP ${response.status}`);
-  const rows = parseCsv(csv);
-  if (!rows.length) throw new Error(`${sheet} CSV 데이터가 없습니다.`);
-  return rows;
+  // 헤더만 있는 탭은 "정상이지만 비어 있음"이다. 실패(throw)와 구분해 빈 배열로 돌려준다 —
+  // 뷰어설정이 비면 닫힌 허용목록, 매장설정이 비면 전 매장 활성, main이 비면 loadData가 오류로 처리한다.
+  return parseCsv(csv);
 }
 
 function normalizeViewers(rows) {
