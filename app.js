@@ -455,7 +455,11 @@ function normalizeViewers(rows) {
 async function loadViewerSettings() {
   try {
     const viewers = normalizeViewers(await fetchSheetCsv('뷰어설정'));
-    if (!viewers.length) throw new Error('활성 뷰어가 없습니다.');
+    if (!viewers.length) {
+      // 설정은 정상인데 활성 뷰어가 0명이면 닫힌 상태다 — 전체 열람 폴백으로 넘기지 않는다.
+      console.warn('뷰어설정에 활성 뷰어가 없어 어떤 PIN도 받지 않습니다.');
+      return [];
+    }
     const byPin = new Map();
     viewers.forEach(viewer => {
       if (byPin.has(viewer.PIN)) {
