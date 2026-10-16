@@ -486,6 +486,7 @@ function filterRowsForViewer(rows, viewer, sourceRows = rows) {
     return rows.filter(row => text(row.group) === value);
   }
   if (type === '팀') return rows.filter(row => text(row.team) === value);
+  console.warn(`뷰어설정의 범위유형이 '그룹' 또는 '팀'이 아니라 표시할 행이 없습니다: ${type}`);
   return [];
 }
 
