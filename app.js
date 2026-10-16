@@ -1,22 +1,26 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // 한국타이어 네이버 플레이스 월간보고서
-// 기존 대시보드 디자인을 유지하면서 월별 원본 데이터 한 행을 직접 읽습니다.
+// GitHub Pages에서 공개 Google 시트 CSV를 읽어 월별 원본 데이터를 표시합니다.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 실제 보고서는 Apps Script의 Report.html에서 실행하고, 시트는 서버 함수로 읽습니다.
-// GitHub Pages 주소로 접속하면 아래 웹 앱으로 이동합니다.
-const REPORT_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzjGM91OHhnBMNEjuWwuCZVQDxiFq5VVM3aunn2EwHKUd5HieHgoVCdAe5xnuitDkyYZg/exec';
+// 웹에 게시한 각 탭에서 보고서 데이터, 매장 설정, 뷰어 설정을 읽습니다.
+const SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTWmF_aoDQ-QJoKSS-9_B14pwOXxglLZHFs8pS2pP-19UBh0TA-nVQODvKpXtXExA1kuOxfEIQLDFtq/pub';
+const SHEET_GIDS = Object.freeze({ main: '1185641162', '매장설정': '1874742464', '뷰어설정': '1253945469' });
+const SHEET_LOAD_ERROR = '시트 데이터를 불러오지 못했습니다. 시트의 웹에 게시 설정과 게시된 탭(main, 매장설정, 뷰어설정)을 확인해주세요.';
 
 const REPORT_PIN = '8236';
 const PIN_SESSION_KEY = 'hankook_month_report_pin_authenticated';
+const VIEWER_SESSION_KEY = 'hankook_month_report_viewer';
 
 let reportInitialized = false;
+let currentViewer = null;
 const RAW = [];
 
 let weekMeta = {};
 let weekKeys = [];
 let monthKeys = [];
 let STORES = [];
+let storeSettings = new Map();
 let MANAGERS = [];
 let TEAMS = [];
 let RAW_HEADERS = [];
@@ -28,14 +32,11 @@ const conversionVisible = { conn: true, res_req: true };
 
 const METRICS = ['views', 'conn', 'miss', 'res_in', 'res_req', 'review', 'neg_review', 'chat'];
 const REPORT_METRICS = ['views', 'conn', 'miss', 'res_in', 'res_req', 'review'];
-const TEAM_SUFFIX = ' PC/LT팀';
 // 시트 열의 의미는 고정입니다. 값이 0.73이면 해당 성별의 비율은 73%입니다.
 const GENDER_SOURCE_HEADERS = Object.freeze({ male: '성별 01', female: '성별 02' });
 
 function teamDisplayName(team) {
-  const name = text(team);
-  if (!name) return '-';
-  return /\sPC\/LT팀$/.test(name) ? name : `${name}${TEAM_SUFFIX}`;
+  return text(team) || '-';
 }
 
 const METRIC_DEFS = {
@@ -360,6 +361,7 @@ function normalizePlaceRow(r) {
     end: dateText(pickRaw(r, ['종료일(일)', '종료일', 'end', 'end_date', 'endDate'])),
     store: text(pickRaw(r, ['매장명', '매장', 'store', 'store_name', 'storeName'])),
     team: text(pickRaw(r, ['팀구분', '팀', 'team', 'teamName'])),
+    group: text(pickRaw(r, ['그룹라벨', '그룹', 'group', 'group_label'])),
     manager: text(pickRaw(r, ['담당자', '담당자명', '담당자 이름', '매장 담당자', '담당', 'manager', 'managerName', 'person_in_charge'])),
     views: metricNumber(pickRaw(r, ['조회수', '플레이스 조회수', 'views', 'place_views', 'placeViews'])),
     conn: metricNumber(pickRaw(r, ['연결콜', '연결 콜', 'conn', 'connected_call', 'connectedCall'])),
@@ -381,24 +383,140 @@ function normalizeRows(data) {
     .filter(r => r.yr && r.mo >= 1 && r.mo <= 12 && r.store && !/^(합계|총합계|총계|전체)$/.test(r.store));
 }
 
-async function loadData() {
-  if (!window.google?.script?.run) {
-    throw new Error('실제 데이터는 Google Apps Script의 보고서에서 확인할 수 있습니다.');
+function parseCsv(csv) {
+  // 자체 파서로 따옴표와 줄바꿈을 처리해 외부 라이브러리 없이 원본 문자열을 보존합니다.
+  const records = [];
+  let row = [];
+  let value = '';
+  let quoted = false;
+  const input = csv.replace(/^\uFEFF/, '');
+  const finishRow = () => {
+    row.push(value);
+    if (row.some(cell => cell.trim() !== '')) records.push(row);
+    row = [];
+    value = '';
+  };
+
+  for (let i = 0; i < input.length; i += 1) {
+    const char = input[i];
+    if (quoted) {
+      if (char === '"') {
+        if (input[i + 1] === '"') {
+          value += '"';
+          i += 1;
+        } else {
+          quoted = false;
+        }
+      } else {
+        value += char;
+      }
+    } else if (char === '"' && value === '') {
+      quoted = true;
+    } else if (char === ',') {
+      row.push(value);
+      value = '';
+    } else if (char === '\n' || char === '\r') {
+      finishRow();
+      if (char === '\r' && input[i + 1] === '\n') i += 1;
+    } else {
+      value += char;
+    }
   }
-  const data = await new Promise((resolve, reject) => {
-    google.script.run.withSuccessHandler(resolve).withFailureHandler(reject).getReportData();
-  });
-  if (data?.error) throw new Error(String(data.error));
+  if (quoted) throw new Error('CSV 따옴표가 닫히지 않았습니다.');
+  finishRow();
+
+  const headers = (records.shift() || []).map(header => header.trim());
+  return records.map(cells => Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? ''])));
+}
+
+async function fetchSheetCsv(sheet) {
+  const gid = SHEET_GIDS[sheet];
+  if (!gid) throw new Error(`알 수 없는 시트: ${sheet}`);
+  const url = `${SHEET_CSV_URL}?single=true&output=csv&gid=${gid}&_=${Date.now()}`;
+  const response = await fetch(url, { cache: 'no-store' });
+  const csv = await response.text();
+  if (/^\s*(?:<!DOCTYPE|<html)/i.test(csv)) throw new Error(`${sheet} 탭이 게시되지 않음`);
+  if (!response.ok) throw new Error(`${sheet} CSV HTTP ${response.status}`);
+  const rows = parseCsv(csv);
+  if (!rows.length) throw new Error(`${sheet} CSV 데이터가 없습니다.`);
+  return rows;
+}
+
+function normalizeViewers(rows) {
+  return rows.filter(row => text(row['활성']).toUpperCase() !== 'N' && text(row['PIN']))
+    .map(row => ({
+      뷰어명: text(row['뷰어명']),
+      PIN: text(row['PIN']),
+      범위유형: text(row['범위유형']),
+      범위값: text(row['범위값'])
+    }));
+}
+
+async function loadViewerSettings() {
+  try {
+    const viewers = normalizeViewers(await fetchSheetCsv('뷰어설정'));
+    if (!viewers.length) throw new Error('활성 뷰어가 없습니다.');
+    const byPin = new Map();
+    viewers.forEach(viewer => {
+      if (byPin.has(viewer.PIN)) {
+        console.warn('뷰어설정에 중복 PIN이 있어 첫 활성 행을 사용합니다.');
+      } else {
+        byPin.set(viewer.PIN, viewer);
+      }
+    });
+    return [...byPin.values()];
+  } catch (error) {
+    console.warn('뷰어설정을 사용할 수 없어 기본 PIN으로 그룹 전체 열람을 허용합니다.', error);
+    // 전체 그룹 허용은 설정을 읽지 못했을 때의 폴백에만 사용합니다.
+    return [{ 뷰어명: '그룹 전체 열람', PIN: REPORT_PIN, 범위유형: '그룹', 범위값: '', allGroups: true }];
+  }
+}
+
+function shouldSkipGroupFilter(rows, viewer) {
+  return text(viewer?.범위유형) === '그룹' && viewer.allGroups !== true &&
+    rows.length > 0 && rows.every(row => !text(row.group));
+}
+
+function filterRowsForViewer(rows, viewer, sourceRows = rows) {
+  if (!viewer) return [];
+  const type = text(viewer.범위유형);
+  const value = text(viewer.범위값);
+  if (type === '그룹') {
+    if (viewer.allGroups === true || shouldSkipGroupFilter(sourceRows, viewer)) return rows;
+    return rows.filter(row => text(row.group) === value);
+  }
+  if (type === '팀') return rows.filter(row => text(row.team) === value);
+  return [];
+}
+
+async function loadData() {
+  const [data, settings] = await Promise.all([
+    fetchSheetCsv('main'),
+    fetchSheetCsv('매장설정').catch(error => {
+      console.warn('매장설정을 불러오지 못해 전 매장을 활성으로 표시합니다.', error);
+      return [];
+    })
+  ]);
   const rows = normalizeRows(data);
   if (!rows.length) {
     throw new Error('월별 데이터가 없습니다. main 시트의 연·월·매장명 열을 확인해주세요.');
   }
 
+  storeSettings = new Map(settings.filter(row => text(row['매장명'])).map(row => {
+    const order = text(row['표시순서']);
+    return [text(row['매장명']), {
+      active: text(row['활성']).toUpperCase() !== 'N',
+      order: order !== '' && Number.isFinite(Number(order)) ? Number(order) : Infinity
+    }];
+  }));
   RAW.length = 0;
-  rows.forEach(row => RAW.push(row));
+  const activeRows = rows.filter(row => storeSettings.get(row.store)?.active !== false);
+  if (shouldSkipGroupFilter(rows, currentViewer)) {
+    console.warn('main의 그룹라벨이 모두 비어 있어 그룹 범위 필터를 건너뜁니다.');
+  }
+  filterRowsForViewer(activeRows, currentViewer, rows).forEach(row => RAW.push(row));
 
-  const suppliedHeaders = Array.isArray(data?.headers) ? data.headers.map(text).filter(Boolean) : [];
-  RAW_HEADERS = [...new Set([...suppliedHeaders, ...RAW.flatMap(row => Object.keys(row.source || {}))])]
+  RAW_HEADERS = [...new Set(RAW.flatMap(row => Object.keys(row.source || {})))]
     .filter(header => RAW.some(row => hasValue(row.source?.[header])));
   ACTIVE_METRICS = REPORT_METRICS.filter(key => RAW.some(row => row[key] !== null));
 
@@ -438,7 +556,7 @@ function rebuildMetaFromRaw() {
     return ay === by ? am - bm : ay - by;
   });
 
-  STORES = [...new Set(RAW.map(r => r.store).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+  STORES = [...new Set(RAW.map(r => r.store).filter(Boolean))].sort((a, b) => ((storeSettings.get(a)?.order ?? Infinity) - (storeSettings.get(b)?.order ?? Infinity)) || a.localeCompare(b, 'ko'));
   MANAGERS = [...new Set(RAW.map(r => r.manager).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
   TEAMS = [...new Set(RAW.map(r => r.team).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
 }
@@ -717,8 +835,7 @@ function updateManagerOptions() {
 
 function updateDependentFilterOptions() {
   const team = $('sel-team')?.value || 'ALL';
-  const stores = [...new Set(RAW.filter(row => team === 'ALL' || row.team === team)
-    .map(row => row.store).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+  const stores = STORES.filter(store => RAW.some(row => row.store === store && (team === 'ALL' || row.team === team)));
   updateOptions($('sel-store'), stores, '전체 매장');
   updateManagerOptions();
 }
@@ -1400,7 +1517,26 @@ function getCurrentPeriodState() {
 
 function renderDashboard() {
   const state = getCurrentPeriodState();
-  if (!state.meta) return;
+  if (!state.meta) {
+    // 전 매장이 비활성이어도 이전 조회의 수치와 차트가 남지 않도록 비웁니다.
+    lastRenderData = null;
+    Object.values(charts).forEach(chart => chart.destroy());
+    charts = {};
+    closeKpiModal();
+    closeInsightModal();
+    if ($('manager-summary')) $('manager-summary').hidden = true;
+    ['header-period', 'period-prev-year', 'period-prev-month', 'period-current'].forEach(id => {
+      if ($(id)) $(id).textContent = '—';
+    });
+    const emptySum = sumRows([]);
+    renderKpiCards(emptySum, null, null, REPORT_METRICS, []);
+    renderGroupSummary(emptySum, REPORT_METRICS);
+    renderAudience([]);
+    renderDetailTable([], state.mode, REPORT_METRICS);
+    renderRawItemsTable([]);
+    renderInsight(state.mode, emptySum, null, null);
+    return;
+  }
 
   const curRows = getRowsByMonthRange(state.startKey, state.endKey, state.store, state.manager, state.team);
   const curSum = sumRows(curRows);
@@ -1728,7 +1864,7 @@ async function refreshData() {
       btn.textContent = '불러오는 중...';
     }
 
-    await loadData(true);
+    await loadData();
     initSelects();
     if (TEAMS.includes(previous['sel-team'])) $('sel-team').value = previous['sel-team'];
     updateDependentFilterOptions();
@@ -1749,7 +1885,7 @@ async function refreshData() {
     console.error(e);
     if ($('header-period')) $('header-period').textContent = '데이터 연결 오류';
     if ($('empty-state')) {
-      $('empty-state').textContent = `데이터를 불러오지 못했습니다: ${e?.message || e}`;
+      $('empty-state').textContent = SHEET_LOAD_ERROR;
       $('empty-state').hidden = false;
     }
   } finally {
@@ -1793,12 +1929,7 @@ async function init() {
   if (downloadRawBtn) downloadRawBtn.addEventListener('click', downloadRawExcel);
 
   try {
-    await loadData(false);
-
-    if (!RAW.length) {
-      if ($('empty-state')) $('empty-state').hidden = false;
-      return;
-    }
+    await loadData();
 
     initSelects();
     renderDashboard();
@@ -1807,7 +1938,7 @@ async function init() {
     console.error(e);
     if ($('header-period')) $('header-period').textContent = '데이터 연결 오류';
     if ($('empty-state')) {
-      $('empty-state').textContent = `데이터를 불러오지 못했습니다: ${e?.message || e}`;
+      $('empty-state').textContent = SHEET_LOAD_ERROR;
       $('empty-state').hidden = false;
     }
   }
@@ -1830,6 +1961,8 @@ window.debugHankookColumns = function () {
 async function openReport() {
   const pinGate = $('pinGate');
   const reportApp = $('reportApp');
+  const subtitle = document.querySelector('.brand-text p');
+  if (subtitle) subtitle.textContent = `도울기획 · 주요 성과 요약 대시보드 · 열람: ${currentViewer?.뷰어명 || '-'}`;
 
   if (pinGate) {
     pinGate.hidden = true;
@@ -1847,18 +1980,15 @@ async function openReport() {
   }
 }
 
-function initPinGate() {
+async function initPinGate() {
   const pinGate = $('pinGate');
   const reportApp = $('reportApp');
   const pinForm = $('pinForm');
   const pinInput = $('pinInput');
   const pinError = $('pinError');
 
-  /*
-   * PIN 화면이 없는 경우를 대비한 안전장치
-   */
   if (!pinGate || !reportApp || !pinForm || !pinInput) {
-    init();
+    console.warn('PIN 화면을 찾을 수 없어 보고서를 열지 않습니다.');
     return;
   }
 
@@ -1866,14 +1996,10 @@ function initPinGate() {
   reportApp.hidden = true;
   pinGate.hidden = false;
 
-  /*
-   * 같은 브라우저 탭에서 이미 인증한 경우
-   * 새로고침해도 다시 묻지 않습니다.
-   */
-  if (sessionStorage.getItem(PIN_SESSION_KEY) === 'true') {
-    openReport();
-    return;
-  }
+  let viewers = null;
+  const submitButton = pinForm.querySelector('button[type="submit"]');
+  pinInput.disabled = true;
+  if (submitButton) submitButton.disabled = true;
 
   /*
    * 숫자만 최대 4자리 입력 가능
@@ -1892,8 +2018,10 @@ function initPinGate() {
 
   pinForm.addEventListener('submit', async event => {
     event.preventDefault();
+    if (!viewers) return;
 
-    if (pinInput.value !== REPORT_PIN) {
+    const viewer = viewers.find(row => row.PIN === pinInput.value);
+    if (!viewer) {
       pinInput.value = '';
       pinInput.classList.add('is-error');
 
@@ -1905,11 +2033,33 @@ function initPinGate() {
       return;
     }
 
+    currentViewer = viewer;
+    sessionStorage.setItem(VIEWER_SESSION_KEY, JSON.stringify(currentViewer));
     sessionStorage.setItem(PIN_SESSION_KEY, 'true');
 
     await openReport();
   });
 
+  viewers = await loadViewerSettings();
+  pinInput.disabled = false;
+  if (submitButton) submitButton.disabled = false;
+
+  // 저장된 PIN을 현재 활성 목록과 대조해 변경된 범위와 비활성 여부도 반영합니다.
+  try {
+    if (sessionStorage.getItem(PIN_SESSION_KEY) === 'true') {
+      const savedViewer = JSON.parse(sessionStorage.getItem(VIEWER_SESSION_KEY) || 'null');
+      currentViewer = viewers.find(viewer => viewer.PIN === savedViewer?.PIN) || null;
+      if (currentViewer) {
+        sessionStorage.setItem(VIEWER_SESSION_KEY, JSON.stringify(currentViewer));
+        await openReport();
+        return;
+      }
+    }
+  } catch (error) {
+    console.warn('저장된 뷰어를 복원하지 못해 PIN을 다시 확인합니다.', error);
+  }
+  sessionStorage.removeItem(PIN_SESSION_KEY);
+  sessionStorage.removeItem(VIEWER_SESSION_KEY);
   pinInput.focus();
 }
 
@@ -1919,15 +2069,10 @@ function initPinGate() {
  */
 window.logoutHankookReport = function () {
   sessionStorage.removeItem(PIN_SESSION_KEY);
+  sessionStorage.removeItem(VIEWER_SESSION_KEY);
   window.location.reload();
 };
 
 document.addEventListener('DOMContentLoaded', () => {
-  // 정적 GitHub 페이지에는 시트 접근 권한이 없으므로 서버가 있는 보고서로 이동합니다.
-  // ?preview=1은 디자인 확인용이며 실제 시트 데이터는 표시하지 않습니다.
-  if (!window.google?.script?.run && !new URLSearchParams(window.location.search).has('preview')) {
-    window.location.replace(REPORT_WEB_APP_URL);
-    return;
-  }
-  initPinGate();
+  return initPinGate();
 });
